@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: 2026 Vercel, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+    inputs: {}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    permissions: {}  # None needed
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.10"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+
+      - run: uv sync --frozen --no-default-groups --group=check
+      - run: uv run --frozen --no-default-groups --group=check ruff format --check src tests
+      - run: uv run --frozen --no-default-groups --group=check ruff check src/lograil tests pyproject.toml
+      - run: uv run --frozen --no-default-groups --group=check mypy
+      - run: uv run --frozen --no-default-groups --group=check ty check
+      - run: uv run --frozen --no-default-groups --group=check zizmor .github/workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    permissions: {}  # None needed
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
+
+      - run: uv sync --frozen --no-default-groups --group=test
+      - run: uv run --frozen --no-default-groups --group=test pytest
+
+  summary:
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    needs: [checks, tests]
+    permissions: {}  # None needed
+    steps:
+      - name: Check required jobs
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+        run: |
+          echo "checks: ${CHECKS_RESULT}"
+          echo "tests: ${TESTS_RESULT}"
+
+          if [ "${CHECKS_RESULT}" != "success" ] || [ "${TESTS_RESULT}" != "success" ]; then
+            exit 1
+          fi

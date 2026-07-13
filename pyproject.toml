@@ -1,0 +1,370 @@
+[project]
+name = "lograil"
+dynamic = ["version"]
+description = "Rich logging, status, progress-line, and log tail helpers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Logging",
+    "Topic :: System :: Monitoring",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+dependencies = [
+    "anyio>=4.0",
+    "rich>=14.0",
+]
+
+[project.scripts]
+lograil = "lograil._internal.cli:main"
+
+[project.urls]
+homepage = "https://github.com/vercel-labs/lograil"
+issues = "https://github.com/vercel-labs/lograil/issues"
+repository = "https://github.com/vercel-labs/lograil"
+
+[project.optional-dependencies]
+victoria = ["httpx>=0.28.1"]
+docker = ["docker>=7.1"]
+file = ["watchdog>=4"]
+
+[dependency-groups]
+test = [
+    "docker>=7.1",
+    "httpx>=0.28.1",
+    "pytest>=9.0.2",
+    "pytest-xdist>=3.8.0",
+    "time-machine>=2.19.0",
+    "typing-extensions>=4.0",
+    "trio>=0.32.0",
+    "watchdog>=4",
+]
+
+# Typecheckers and linters should stay constrained by uv.lock in CI.
+check = [
+    "httpx>=0.28.1",
+    "mypy>=1.19.1",
+    "poethepoet>=0.48.0",
+    "ruff>=0.15.21",
+    "tox>=4",
+    "tox-uv-bare",
+    "ty>=0.0.49",
+    "watchdog>=4",
+    "zizmor>=1.26.1",
+]
+
+dev = [
+    { include-group = "test" },
+    { include-group = "check" },
+]
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[tool.tox]
+requires = ["tox>=4", "tox-uv-bare"]
+env_list = ["py310", "py311", "py312", "py313", "py314"]
+
+[tool.tox.env_run_base]
+runner = "uv-venv-lock-runner"
+package = "skip"
+dependency_groups = ["test"]
+commands = [["pytest", "-n", "auto", { replace = "posargs", extend = true }]]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = ["src"]
+packages = ["lograil"]
+explicit_package_bases = true
+
+[tool.ty]
+
+[tool.ty.environment]
+python-version = "3.10"
+extra-paths = ["src"]
+
+[tool.ty.src]
+include = ["src/lograil"]
+
+[tool.ruff]
+line-length = 80
+target-version = "py310"
+preview = true
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+extend-select = [
+    "A",     # flake8-builtins
+    "ANN",   # flake8-annotations
+    "ASYNC", # flake8-async
+    "BLE",   # flake8-blind-except
+    "C4",    # flake8-comprehensions
+    "D",     # pydocstyle
+    "DTZ",   # flake8-datetimez
+    "ERA",   # flake8-eradicate
+    "FA",    # flake8-future-annotations
+    "FBT",   # flake8-boolean-trap
+    "FLY",   # flynt
+    "FIX",   # flake8-fixme
+    "FURB",  # refurb
+    "G",     # flake8-logging-format
+    "ICN",   # flake8-import-conventions
+    "INP",   # flake8-no-pep420 (on PyPI)
+    "LOG",   # flake8-logging
+    "N",     # pep8-naming
+    "PERF",  # perflint
+    "PGH",   # pygrep-hooks
+    "PIE",   # flake8-pie
+    "PLC",   # pylint-convention
+    "PLE",   # pylint-error
+    "PLR",   # pylint-refactor
+    "PLW",   # pylint-warning
+    "PT",    # flake8-pytest-style
+    "PTH",   # flake8-use-pathlib
+    "PYI",   # flake8-pyi
+    "Q",     # flake8-quotes
+    "RET",   # flake8-return
+    "RSE",   # flake8-raise
+    "RUF",   # ruff specific
+    "S",     # flake8-bandit
+    "SIM",   # flake8-simplify
+    "SLF",   # flake8-self
+    "SLOT",  # flake8-slots
+    "T10",   # flake8-debugger
+    "T20",   # flake8-print
+    "TC",    # flake8-type-checking
+    "TRY",   # tryceratops
+    "YTT",   # flake8-2020
+
+    "banned-api", # prefer-anyio-primitives
+    "explicit-string-concatenation",
+    "implicit-string-concatenation-in-collection-literal",
+    "import-outside-top-level",
+    "import-private-name",
+    "manual-list-comprehension",
+    "single-line-implicit-string-concatenation",
+    "sorted-min-max",
+    "trailing-comma-on-bare-tuple",
+    "type-name-incorrect-variance",
+]
+extend-ignore = [
+    "any-type",
+    "f-string-missing-placeholders",
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-second-line",
+    "no-self-use",
+    "raise-vanilla-args",
+    "suppressible-exception",
+    "try-except-in-loop",
+    "typing-only-first-party-import",
+    "typing-only-standard-library-import",
+    "typing-only-third-party-import",
+    "unused-async",
+]
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = false
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["lograil"]
+section-order = [
+    "future",
+    "typing",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.isort.sections]
+typing = ["typing", "typing_extensions"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/lograil/_internal/console.py" = [
+    "builtin-variable-shadowing", # public console.print shim mirrors Rich
+]
+"src/lograil/_internal/log.py" = [
+    "global-statement",       # module-level runtime logging state
+    "private-member-access",  # Rich status internals are required here
+    "too-many-branches",      # central status context manager
+    "too-many-locals",        # central status context manager
+    "too-many-statements",    # central status context manager
+]
+"src/lograil/_internal/formatter.py" = [
+    "too-many-branches",   # log entry formatter is intentionally centralized
+    "too-many-locals",     # log entry formatter is intentionally centralized
+    "too-many-statements", # log entry formatter is intentionally centralized
+]
+"src/lograil/_internal/process.py" = [
+    "bad-dunder-method-name", # Rich render protocol uses __rich__
+]
+"src/lograil/sources/docker.py" = [
+    "too-many-branches",   # Docker progress parsers handle many event shapes
+    "too-many-locals",     # Docker progress parsers handle many event shapes
+    "too-many-statements", # Docker progress parsers handle many event shapes
+]
+"src/lograil/sources/victoria.py" = [
+    "too-many-branches",                 # LogsQL builder handles many filters
+    "too-many-statements-in-try-clause", # stream parsing is scoped by request
+    "try-consider-else",                 # direct request/return flow is clearer
+]
+"src/lograil/_internal/tail.py" = [
+    "blind-except",                      # tailing thread retries backend failures
+    "private-member-access",             # status renderer coordinates log internals
+    "suspicious-subprocess-import",      # uses system tail for file following
+    "subprocess-without-shell-equals-true", # command is fixed plus file paths
+    "too-many-branches",                 # tail loop handles routing/dedup/progress
+    "too-many-statements",               # stream context manager owns one tail loop
+    "too-many-statements-in-try-clause", # retry boundary covers one tail iteration
+    "try-consider-else",                 # direct tail loop return is clearer
+]
+"tests/**/*.py" = [
+    "D",       # docstrings not required in tests
+    "assert",  # pytests are all about asserts
+    "hardcoded-temp-file",       # tests assert temp-looking paths
+    "hardcoded-password-default",   # tests set tokens
+    "hardcoded-password-func-arg",  # tests set tokens
+    "hardcoded-password-string",    # tests assert tokens
+    "import-private-name",
+    "magic-value-comparison",
+    "private-member-access",
+    "too-many-statements",
+]
+"tests/dashboard_demo.py" = [
+    "print", # interactive demo prints its final process summary
+]
+"scripts/sync-githooks.py" = [
+    "D",                               # script internals do not need API docs
+    "print",                           # setup script reports installed hooks
+    "start-process-with-partial-path", # git is intentionally resolved by PATH
+    "subprocess-without-shell-equals-true", # git argv is controlled by script
+    "suspicious-subprocess-import",    # script only shells out to git config
+]
+"scripts/poe.py" = [
+    "D",                               # script internals do not need API docs
+    "print",                           # failure summaries print to stderr
+]
+
+[tool.ruff.lint.pylint]
+allow-magic-value-types = ["int", "str"]
+max-args = 10
+max-returns = 10
+max-statements-in-try = 10
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"asyncio.Condition".msg = "prefer-anyio-primitives: use anyio.Condition instead."
+"asyncio.Event".msg = "prefer-anyio-primitives: use anyio.Event instead."
+"asyncio.Lock".msg = "prefer-anyio-primitives: use anyio.Lock instead."
+"asyncio.Queue".msg = "prefer-anyio-primitives: use anyio memory streams instead."
+"asyncio.Semaphore".msg = "prefer-anyio-primitives: use anyio.Semaphore instead."
+"asyncio.TaskGroup".msg = "prefer-anyio-primitives: use anyio.create_task_group instead."
+"asyncio.create_task".msg = "prefer-anyio-primitives: use an AnyIO task group instead."
+"asyncio.gather".msg = "prefer-anyio-primitives: use an AnyIO task group instead."
+"asyncio.get_event_loop".msg = "prefer-anyio-primitives: avoid asyncio loop APIs."
+"asyncio.get_running_loop".msg = "prefer-anyio-primitives: avoid asyncio loop APIs."
+"asyncio.new_event_loop".msg = "prefer-anyio-primitives: avoid asyncio loop APIs."
+"asyncio.run".msg = "prefer-anyio-primitives: use anyio.run instead."
+"asyncio.sleep".msg = "prefer-anyio-primitives: use anyio.sleep instead."
+"asyncio.timeout".msg = "prefer-anyio-primitives: use anyio fail_after or move_on_after instead."
+"asyncio.to_thread".msg = "prefer-anyio-primitives: use anyio.to_thread.run_sync instead."
+"asyncio.wait_for".msg = "prefer-anyio-primitives: use anyio fail_after or move_on_after instead."
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.poe]
+verbosity = -1
+
+[tool.poe.tasks.setup]
+sequence = ["sync-githooks"]
+
+[tool.poe.tasks.sync-githooks]
+cmd = "python scripts/sync-githooks.py"
+
+[tool.poe.tasks.fix]
+sequence = ["ruff-check-fix", "ruff-format-fix"]
+
+[tool.poe.tasks.lint]
+cmd = "python scripts/poe.py lint --poe-verbose ${verbose:-false}"
+args = [{ name = "verbose", options = ["-v", "--verbose"], type = "boolean" }]
+
+[tool.poe.tasks.typecheck]
+cmd = "python scripts/poe.py typecheck --poe-verbose ${verbose:-false}"
+args = [{ name = "verbose", options = ["-v", "--verbose"], type = "boolean" }]
+
+[tool.poe.tasks.test]
+cmd = "python scripts/poe.py test --poe-verbose ${verbose:-false}"
+args = [{ name = "verbose", options = ["-v", "--verbose"], type = "boolean" }]
+
+[tool.poe.tasks.test-python-matrix]
+cmd = "python scripts/poe.py test-python-matrix --poe-verbose ${verbose:-false}"
+args = [{ name = "verbose", options = ["-v", "--verbose"], type = "boolean" }]
+
+[tool.poe.tasks.qa]
+cmd = "python scripts/poe.py qa --poe-verbose ${verbose:-false}"
+args = [{ name = "verbose", options = ["-v", "--verbose"], type = "boolean" }]
+
+[tool.poe.tasks.pre-commit]
+cmd = "python scripts/poe.py pre-commit"
+
+[tool.poe.tasks.pre-push]
+cmd = "python scripts/poe.py pre-push"
+
+[tool.poe.tasks.ruff-check]
+cmd = "ruff check"
+
+[tool.poe.tasks.ruff-check-fix]
+cmd = "ruff check --fix"
+
+[tool.poe.tasks.ruff-format]
+cmd = "ruff format --check"
+
+[tool.poe.tasks.ruff-format-fix]
+cmd = "ruff format"
+
+[tool.poe.tasks.lint-zizmor]
+cmd = "zizmor --offline ."
+
+[tool.poe.tasks.typecheck-mypy]
+cmd = "mypy"
+
+
+[tool.poe.tasks.typecheck-ty]
+cmd = "ty check"
