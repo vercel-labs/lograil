@@ -46,16 +46,18 @@ class ProgressUpdate:
     """One structured progress update.
 
     ``description`` names the current work item; ``completed``/``total``
-    drive the bar.  ``label`` (or the structured ``process``/``subject``
-    pair) titles the bar; ``clear_label`` tears the bar down and restores
-    the plain status spinner.  Instances are parsed from child-process
-    progress lines (:func:`parse`) or built from entry metadata via
+    drive the bar.  A ``None`` ``total`` marks indeterminate progress:
+    no bar or percentage is rendered, only the description.  ``label``
+    (or the structured ``process``/``subject`` pair) titles the bar;
+    ``clear_label`` tears the bar down and restores the plain status
+    spinner.  Instances are parsed from child-process progress lines
+    (:func:`parse`) or built from entry metadata via
     :meth:`from_mapping`.
     """
 
     description: str
     completed: int
-    total: int
+    total: int | None = None
     label: str | None = None
     process: str | None = None
     subject: str | None = None
@@ -73,7 +75,9 @@ class ProgressUpdate:
         clear_label = data.get("clear_label", False)
         if not isinstance(description, str):
             return None
-        if not isinstance(completed, int) or not isinstance(total, int):
+        if not isinstance(completed, int):
+            return None
+        if total is not None and not isinstance(total, int):
             return None
         if label is not None and not isinstance(label, str):
             return None
@@ -108,7 +112,7 @@ def format_line(
     *,
     description: str,
     completed: int,
-    total: int,
+    total: int | None = None,
     label: str | None = None,
     process: str | None = None,
     subject: str | None = None,
@@ -119,8 +123,9 @@ def format_line(
     payload: dict[str, object] = {
         "description": description,
         "completed": completed,
-        "total": total,
     }
+    if total is not None:
+        payload["total"] = total
     if label is not None:
         payload["label"] = label
     if process is not None:
@@ -141,7 +146,7 @@ def emit(
     *,
     description: str,
     completed: int,
-    total: int,
+    total: int | None = None,
     label: str | None = None,
     process: str | None = None,
     subject: str | None = None,
@@ -207,12 +212,14 @@ def _progress_detail_width(description: str) -> int:
     return max(1, available)
 
 
-def _status_progress_detail_width(description: str) -> int:
+def _status_progress_detail_width(
+    description: str, *, with_bar: bool = True
+) -> int:
     available = (
         console.stderr_console.width
         - _STATUS_SPINNER_OVERHEAD
         - _progress_description_width(description)
-        - _PROGRESS_FIXED_WIDTH
+        - (_PROGRESS_FIXED_WIDTH if with_bar else 1)
     )
     return max(1, available)
 
@@ -223,24 +230,27 @@ def _format_status_progress(
     description: str | None = None,
     detail: str,
     completed: int,
-    total: int,
+    total: int | None,
 ) -> Text:
     if prefix is None:
         if description is None:
             raise ValueError("status progress requires prefix or description")
         prefix = description
     text = Text()
-    text.append_text(
-        render_progress_bar(
-            completed=completed,
-            total=total,
-            width=_PROGRESS_BAR_WIDTH,
+    if total is not None:
+        text.append_text(
+            render_progress_bar(
+                completed=completed,
+                total=total,
+                width=_PROGRESS_BAR_WIDTH,
+            )
         )
-    )
-    pct = progress_percent(completed=completed, total=total)
-    text.append(f" {pct:>3d}% ", style="progress.percentage")
+        pct = progress_percent(completed=completed, total=total)
+        text.append(f" {pct:>3d}% ", style="progress.percentage")
     detail_text = Text.from_markup(_escape_markup(detail))
-    detail_width = _status_progress_detail_width(prefix)
+    detail_width = _status_progress_detail_width(
+        prefix, with_bar=total is not None
+    )
     if detail_text.cell_len > detail_width:
         detail_text.truncate(detail_width, overflow="ellipsis")
     detail_text.stylize("dim")

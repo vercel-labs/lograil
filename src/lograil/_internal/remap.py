@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import json
 from collections.abc import Iterable
 
 from lograil._internal import progress
@@ -20,6 +21,10 @@ PROGRESS_PROCESS = "lograil.progress.process"
 PROGRESS_SUBJECT = "lograil.progress.subject"
 PROGRESS_CLEAR_LABEL = "lograil.progress.clear_label"
 STATUS_ONLY = "lograil.status_only"
+STAGE = "lograil.stage"
+"""Producer-defined phase of a multi-stage run (e.g. collect, run)."""
+STAGE_STATUS = "lograil.stage.status"
+"""Stage lifecycle status: started, running, finished, or failed."""
 
 
 class Remap(Protocol):
@@ -54,6 +59,43 @@ class RemapPipeline:
         return current
 
 
+def decode_ndjson_entry(entry: LogEntry) -> LogEntry:
+    """Adopt raw lines that are self-identifying NDJSON log entries.
+
+    Sources that read unstructured output (fd, subprocess, file) wrap
+    each raw line as the entry's ``message``.  When such a line is a
+    JSON object that carries at least one ``lograil.``-prefixed key, the
+    producer is speaking lograil's entry format natively (e.g. ``ggt
+    --output-format=json``): the parsed object replaces the wrapped
+    line, layered over source-provided context such as ``name`` and
+    ``created``.  Anything else — malformed JSON, non-object JSON, or
+    JSON without lograil metadata — is left untouched and renders as
+    plain text.
+    """
+    msg = entry.get("message")
+    if not isinstance(msg, str) or not msg.lstrip().startswith("{"):
+        return entry
+    try:
+        parsed = json.loads(msg)
+    except ValueError:
+        return entry
+    if not isinstance(parsed, dict) or not any(
+        isinstance(key, str) and key.startswith("lograil.") for key in parsed
+    ):
+        return entry
+    if entry.get("lograil.status.detail") == msg:
+        decoded_message = parsed.get("message")
+        if isinstance(decoded_message, str):
+            entry["lograil.status.detail"] = decoded_message
+        else:
+            del entry["lograil.status.detail"]
+    # The wrapped raw line must not survive as the message if the
+    # producer's entry does not define one.
+    del entry["message"]
+    entry.update(parsed)
+    return entry
+
+
 def normalize_entry(entry: LogEntry) -> LogEntry:
     """Normalize generic lograil fields."""
     if "message" not in entry and "msg" in entry:
@@ -85,7 +127,8 @@ def extract_progress_metadata(entry: LogEntry) -> LogEntry:
         entry["lograil.status.detail"] = update.description
     entry[PROGRESS_DESCRIPTION] = update.description
     entry[PROGRESS_COMPLETED] = update.completed
-    entry[PROGRESS_TOTAL] = update.total
+    if update.total is not None:
+        entry[PROGRESS_TOTAL] = update.total
     if update.label is not None:
         entry[PROGRESS_LABEL] = update.label
     if update.process is not None:
@@ -98,6 +141,7 @@ def extract_progress_metadata(entry: LogEntry) -> LogEntry:
 
 
 DEFAULT_REMAPS: tuple[Remap, ...] = (
+    decode_ndjson_entry,
     normalize_entry,
     extract_progress_metadata,
 )

@@ -35,6 +35,44 @@ def test_parse_rejects_bad_payload() -> None:
     assert progress.parse("not progress") is None
 
 
+def test_format_line_omits_indeterminate_total() -> None:
+    line = format_progress_line(description="collecting", completed=5)
+
+    assert '"total"' not in line
+    parsed = progress.parse(line)
+    assert parsed is not None
+    assert parsed.completed == 5
+    assert parsed.total is None
+
+
+def test_from_mapping_accepts_missing_total() -> None:
+    update = progress.ProgressUpdate.from_mapping({
+        "description": "collecting",
+        "completed": 5,
+    })
+
+    assert update is not None
+    assert update.total is None
+
+
+def test_from_mapping_still_validates_types() -> None:
+    assert (
+        progress.ProgressUpdate.from_mapping({
+            "description": "collecting",
+            "completed": "5",
+        })
+        is None
+    )
+    assert (
+        progress.ProgressUpdate.from_mapping({
+            "description": "collecting",
+            "completed": 5,
+            "total": "10",
+        })
+        is None
+    )
+
+
 def test_instrumentation_env_enables_progress_lines(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -77,6 +115,23 @@ def test_status_progress_falls_back_to_ascii_glyphs(
 
     assert "=" in message.plain
     assert "-" in message.plain
+
+
+def test_status_progress_indeterminate_renders_detail_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(console.stderr_console, "legacy_windows", False)
+
+    message = progress._format_status_progress(
+        description="collecting",
+        detail="collected 123/130 tests",
+        completed=123,
+        total=None,
+    )
+
+    assert "collected 123/130 tests" in message.plain
+    assert "━" not in message.plain
+    assert "%" not in message.plain
 
 
 class _FakeProgress:
@@ -142,6 +197,43 @@ def test_clear_label_and_finish_reset_identical_state(
     # finish() additionally closes the renderer and drops the status.
     assert finished._closed is True
     assert finished._active_status is None
+
+
+def test_renderer_indeterminate_to_determinate_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(log, "plain_output_enabled", lambda: False)
+    monkeypatch.setattr(log, "get_active_status", lambda: None)
+    monkeypatch.setattr(log, "get_sticky_prefix", lambda: None)
+    monkeypatch.setattr(log, "get_sticky_subject", lambda: None)
+
+    renderer = progress.StatusProgressRenderer()
+    try:
+        renderer.update(
+            progress.ProgressUpdate(
+                description="collected 5 tests",
+                completed=5,
+                label="ggt collect",
+            )
+        )
+        assert renderer._progress is not None
+        assert renderer._task_id is not None
+        task = renderer._progress.tasks[renderer._task_id]
+        assert task.total is None
+
+        renderer.update(
+            progress.ProgressUpdate(
+                description="running tests",
+                completed=1,
+                total=10,
+                label="ggt run",
+            )
+        )
+        task = renderer._progress.tasks[renderer._task_id]
+        assert task.total == 10
+        assert task.completed == 1
+    finally:
+        renderer.finish()
 
 
 def test_progress_bar_width_is_single_sourced() -> None:

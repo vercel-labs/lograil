@@ -41,8 +41,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source",
-        required=True,
-        help="source identifier, such as docker-build",
+        default="fd",
+        help=(
+            "source identifier, such as docker-build "
+            "(default: fd, which reads log lines from stdin)"
+        ),
     )
     parser.add_argument(
         "--output",
