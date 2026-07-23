@@ -208,6 +208,39 @@ run_process_group([ProcessSpec(argv=["python", "worker.py"], env=env)])
 Any source can carry progress the same way: entries annotated with the
 `lograil.progress.*` keys (see `lograil.ProgressUpdate`) render as bars.
 
+Omit `total` (or set it to `null`) for indeterminate progress: no bar or
+percentage is rendered, only the description text next to the spinner.
+
+## NDJSON entries from tools that speak lograil natively
+
+Tools can also skip the progress-line prefix entirely and emit whole
+entries as NDJSON: one JSON object per line, using the standard entry
+keys. Raw-line sources (`fd`, `file`, subprocesses) autodetect such
+lines and adopt them in place of the wrapped text — but only when the
+object **self-identifies** by carrying at least one `lograil.*` key, so
+arbitrary JSON application logs pass through untouched as plain text.
+
+```sh
+# ggt emits lograil-native NDJSON on stdout; the default fd source
+# picks it up
+ggt tests --output-format=json | lograil
+```
+
+```json
+{"message": "PASSED tests.test_api.TestX.test_y", "levelname": "INFO",
+ "lograil.stage": "run", "lograil.stage.status": "running",
+ "lograil.progress.description": "tests.test_api.TestX.test_y",
+ "lograil.progress.completed": 42, "lograil.progress.total": 98,
+ "lograil.progress.process": "ggt", "lograil.progress.subject": "run"}
+```
+
+Alongside the `lograil.progress.*` family, two advisory keys describe
+multi-stage runs: `lograil.stage` names the producer-defined phase
+(e.g. `collect`, `run`, `teardown`) and `lograil.stage.status` its
+lifecycle state (`started`, `running`, `finished`, `failed`). Producers
+should set `lograil.progress.clear_label` on a stage's final entry to
+tear the bar down before the next stage begins.
+
 ## Pluggable sources
 
 A source is anything that yields entry dicts. Subclass `LogSource`, pass a
@@ -244,7 +277,7 @@ Bundled sources:
 | source id      | class                                 | reads                                                             |
 | -------------- | ------------------------------------- | ----------------------------------------------------------------- |
 | `docker-build` | `sources.docker.DockerBuildLogSource` | `docker build` plain/rawjson output, with per-step progress       |
-| `fd`           | `sources.fd.FileDescriptorLogSource`  | newline-delimited lines from an fd or stdin                       |
+| `fd`           | `sources.fd.FileDescriptorLogSource`  | newline-delimited lines from an fd or stdin (the CLI default)     |
 | `file`         | `sources.file.FileLogSource`          | files and glob patterns, rotation-aware (`[file]` extra)          |
 | `victoria`     | `sources.victoria.VictoriaLogsSource` | VictoriaLogs live tail with reconnect/resume (`[victoria]` extra) |
 | --             | `SubprocessLogSource` (async)         | a subprocess's stdout/stderr streams                              |
@@ -286,14 +319,15 @@ LOGRAIL=warn,lograil.tail=info  # per-target overrides, most specific wins
 
 ## CLI
 
-The `lograil` command adapts a stream on stdin using any registered source:
+The `lograil` command adapts a stream on stdin using any registered
+source (`fd` by default, reading raw log lines):
 
 ```sh
 docker build --progress=plain . 2>&1 | lograil --source=docker-build
 # fancy TTY: one progress bar per build step; errors printed permanently
 
-tail -f app.log | lograil --source=fd --output=plain
-kubectl logs -f deploy/api | lograil --source=fd --output=json --filter=warn
+tail -f app.log | lograil --output=plain
+kubectl logs -f deploy/api | lograil --output=json --filter=warn
 ```
 
 `--output` and `--filter` mirror `LOGRAIL_OUTPUT` and `LOGRAIL`.
