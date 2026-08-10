@@ -87,6 +87,47 @@ def test_fancy_status_process_subject_renders_styling(
     assert any("bold blue" in str(span.style) for span in spinner_text.spans)
 
 
+def test_nested_fancy_status_restores_parent_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    lograil.configure_logging(default="debug")
+
+    with lograil.status(
+        process="build", subject="postgresql", done=None
+    ) as parent:
+        assert parent._status is not None
+        with lograil.status(
+            process="extract", subject="source.tar.gz", done=None
+        ):
+            assert parent._status.status.plain == "extract source.tar.gz"
+        assert parent._status.status.plain == "build postgresql"
+
+
+def test_progress_restores_innermost_status_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    lograil.configure_logging(default="debug")
+
+    with lograil.status(
+        process="build", subject="postgresql", done=None
+    ) as parent:
+        assert parent._status is not None
+        with lograil.status(
+            process="extract", subject="source.tar.gz", done=None
+        ):
+            with lograil.progress(
+                process="extract",
+                subject="source.tar.gz",
+                description="archive members",
+                total=2,
+            ) as extraction:
+                extraction.advance()
+            assert parent._status.status.plain == "extract source.tar.gz"
+        assert parent._status.status.plain == "build postgresql"
+
+
 def test_fancy_status_message_brackets_display_literally(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

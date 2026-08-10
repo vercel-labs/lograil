@@ -339,9 +339,8 @@ class StatusProgressRenderer:
                 return
             if update.clear_label:
                 active_status = self._active_status or log.get_active_status()
-                sticky_prefix = log.get_sticky_prefix()
-                if active_status is not None and sticky_prefix is not None:
-                    active_status.update(sticky_prefix)
+                if active_status is not None:
+                    active_status.restore()
                 self._reset_owned()
                 return
             description, subject = self._description(update)

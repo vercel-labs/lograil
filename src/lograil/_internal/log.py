@@ -288,7 +288,9 @@ class LograilHandler(logging.Handler):
             log_time_format=_format_log_time,
         )
 
-    def setLevel(self, level: int | str) -> None:  # noqa: N802
+    def setLevel(  # ruff:ignore[invalid-function-name]
+        self, level: int | str
+    ) -> None:
         """Set the threshold on this handler and its delegate."""
         super().setLevel(level)
         self._handler.setLevel(level)
@@ -604,6 +606,7 @@ class StatusHandle:
         *,
         _status: Status | None,
         done: str | None,
+        _restore_message: str | Text | None = None,
         _original_handlers: list[logging.Handler] | None = None,
         _parent: StatusHandle | None = None,
         _spinner_handler: _SpinnerHandler | None = None,
@@ -615,6 +618,7 @@ class StatusHandle:
         self._handlers_restored = False
         self._parent = _parent
         self._spinner_handler = _spinner_handler
+        self._restore_message = _restore_message
         self.done_style = "success"
 
     @property
@@ -685,6 +689,13 @@ class StatusHandle:
                 message_process,
                 message_subject,
             ))
+            self._restore_message = message
+
+    def restore(self) -> None:
+        """Restore this status's stable label after transient output."""
+        status_obj = self._root_status()
+        if status_obj is not None and self._restore_message is not None:
+            status_obj.update(_fit_spinner_text(self._restore_message))
 
     def cancel(
         self, *, active: str = "cancelling", done: str = "cancelled"
@@ -718,14 +729,21 @@ class StatusHandle:
             _logger.handlers = list(self._original_handlers)
             self._handlers_restored = True
 
-    def resume_status(self, message: str | None = None) -> None:
+    def resume_status(self, message: str | Text | None = None) -> None:
         """Switch back from a progress renderable to the spinner."""
         if self._parent is not None:
-            self._parent.resume_status(message)
+            restore_message = (
+                self._restore_message if message is None else message
+            )
+            self._parent.resume_status(restore_message)
             return
+        if self._status is not None:
+            restore_message = (
+                self._restore_message if message is None else message
+            )
+            if restore_message is not None:
+                self._status.update(_fit_spinner_text(restore_message))
         if self._status is not None and self._handlers_restored:
-            if message is not None:
-                self._status.update(_fit_spinner_text(message))
             self._status._live.update(self._status.renderable, refresh=True)
             self._status.start()
             original_handlers = self._original_handlers or []
@@ -869,7 +887,9 @@ def status(
     try:
         if output_mode() != "fancy":
             _logger.info(message)
-            handle = StatusHandle(_status=None, done=done)
+            handle = StatusHandle(
+                _status=None, done=done, _restore_message=message
+            )
             token = _active_status.set(handle)
             exc_raised = True
             try:
@@ -893,7 +913,12 @@ def status(
             root_status = parent._root_status()
             if root_status is not None:
                 root_status.update(_fit_spinner_text(message))
-            handle = StatusHandle(_status=None, done=done, _parent=parent)
+            handle = StatusHandle(
+                _status=None,
+                done=done,
+                _restore_message=message,
+                _parent=parent,
+            )
             token = _active_status.set(handle)
             exc_raised = True
             try:
@@ -901,6 +926,7 @@ def status(
                 exc_raised = False
             finally:
                 _active_status.reset(token)
+                parent.restore()
                 if handle.done_style == "warning":
                     exc_raised = False
                 if not exc_raised and handle.done is not None:
@@ -922,6 +948,7 @@ def status(
             handle = StatusHandle(
                 _status=rich_status,
                 done=done,
+                _restore_message=message,
                 _original_handlers=original_handlers,
                 _spinner_handler=spinner_handler,
             )

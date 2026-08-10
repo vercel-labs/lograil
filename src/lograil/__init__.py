@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from lograil._internal.async_tail import AsyncLogSource, SubprocessLogSource
 from lograil._internal.formatter import LograilFormatter, format_log_entry
+from lograil._internal.lifecycle import ProgressHandle, progress, stage
 from lograil._internal.log import (
     EnvFilter,
     LograilHandler,
@@ -58,6 +59,7 @@ __all__ = [
     "ProcessGroupResult",
     "ProcessOutputParser",
     "ProcessSpec",
+    "ProgressHandle",
     "ProgressUpdate",
     "Remap",
     "RemapPipeline",
@@ -70,9 +72,11 @@ __all__ = [
     "format_log_entry",
     "format_progress_line",
     "lograil_instrumentation_env",
+    "progress",
     "quiet",
     "register_output_parser",
     "run_process_group",
+    "stage",
     "status",
     "status_label",
     "stream_log_files",
