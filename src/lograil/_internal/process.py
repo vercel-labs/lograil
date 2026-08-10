@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 import os
 from collections.abc import (
@@ -50,14 +50,21 @@ from lograil.parsers._base import (
 
 _GROUPED_CELL_WIDTH = 30
 _GROUP_LABEL_MAX_WIDTH = 12
-_PROGRESS_LABEL_MAX_WIDTH = 18
+_PROGRESS_LABEL_MAX_WIDTH = 30
 _CANCELLED_EXIT_CODE = 130
 ProcessOutputParserSpec: TypeAlias = str | ProcessOutputParser | None
+ProcessLayout: TypeAlias = Literal["auto", "spinner", "progress"]
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessSpec:
-    """Specification for one subprocess in a process group."""
+    """Specification for one subprocess in a process group.
+
+    ``layout`` controls whether the dashboard renders this process as a
+    spinner or progress row.  ``auto`` retains parser-based inference;
+    callers that know the child protocol can select either presentation
+    explicitly without coupling it to a parser implementation.
+    """
 
     argv: Sequence[str]
     cwd: str | None = None
@@ -70,6 +77,7 @@ class ProcessSpec:
     parser: ProcessOutputParserSpec = None
     remaps: Iterable[Remap] | None = None
     kind: str | None = None
+    layout: ProcessLayout = "auto"
 
     @property
     def label(self) -> str:
@@ -109,6 +117,8 @@ class ProcessGroupResult:
 class _ProcessState:
     spec: ProcessSpec
     parser: OutputParserBinding = field(init=False)
+    display_process: str = field(init=False)
+    display_subject: str | None = field(init=False)
     running: bool = True
     exit_code: int | None = None
     detail: str | None = None
@@ -123,7 +133,12 @@ class _ProcessState:
         return self.exit_code == 0
 
     def __post_init__(self) -> None:
+        if self.spec.layout not in {"auto", "spinner", "progress"}:
+            msg = f"unknown process layout: {self.spec.layout}"
+            raise ValueError(msg)
         self.parser = _parser_binding_for(self.spec)
+        self.display_process = self.spec.label
+        self.display_subject = self.spec.subject
 
 
 class _DashboardRenderable:
@@ -135,9 +150,6 @@ class _DashboardRenderable:
 
     def __init__(self, dashboard: _ProcessDashboard) -> None:
         self._dashboard = dashboard
-
-    def __rich__(self) -> RenderableType:
-        return self._dashboard.render()
 
     def __rich_console__(
         self, console: RichConsole, options: ConsoleOptions
@@ -153,8 +165,12 @@ class _ProcessDashboard:
         self._states = list(states)
 
     def finish(self, state: _ProcessState, exit_code: int) -> None:
-        if state.parser.capabilities.complete_on_success and exit_code == 0:
-            if state.total is None:
+        completes_progress = (
+            state.spec.layout == "progress"
+            or state.parser.capabilities.complete_on_success
+        )
+        if completes_progress and exit_code == 0:
+            if state.total is None or state.total <= 0:
                 state.completed = 1
                 state.total = 1
             elif state.completed is None or state.completed < state.total:
@@ -170,7 +186,10 @@ class _ProcessDashboard:
 
     def render(self, *, width: int | None = None) -> RenderableType:
         show_labels = len(self._categories()) > 1
-        groups = self._grouped_spinner_table(show_labels=show_labels)
+        groups = self._grouped_spinner_table(
+            show_labels=show_labels,
+            width=width,
+        )
         progress = self._progress_table(show_labels=show_labels, width=width)
         renderables: list[RenderableType] = []
         if groups.row_count:
@@ -183,8 +202,16 @@ class _ProcessDashboard:
             return Text("processes")
         return Group(*renderables)
 
-    def _grouped_spinner_table(self, *, show_labels: bool) -> Table:
+    def _grouped_spinner_table(
+        self, *, show_labels: bool, width: int | None
+    ) -> Table:
         label_width = self._group_label_width()
+        render_width = (
+            width if width is not None else console.stderr_console.width
+        )
+        category_width = label_width + 1 if show_labels else 0
+        # Rich's Spinner adds a glyph and a separating space around the text.
+        single_label_width = max(1, render_width - category_width - 2)
         table = Table.grid(padding=0)
         if show_labels:
             table.add_column(width=label_width + 1, no_wrap=True)
@@ -198,15 +225,19 @@ class _ProcessDashboard:
         for index, (category, states) in enumerate(sorted(by_category.items())):
             if index > 0:
                 table.add_row(Text(), Text())
-            cells: list[RenderableType] = [
-                Columns(
+            if len(states) == 1:
+                grouped: RenderableType = _spinner_cell(
+                    states[0], max_width=single_label_width
+                )
+            else:
+                grouped = Columns(
                     [_spinner_cell(state) for state in states],
                     equal=False,
                     expand=False,
                     padding=(0, 1, 0, 0),
                     width=_GROUPED_CELL_WIDTH,
                 )
-            ]
+            cells: list[RenderableType] = [grouped]
             if show_labels:
                 cells.insert(0, _group_label(category, width=label_width))
             table.add_row(*cells)
@@ -268,7 +299,7 @@ class _ProcessDashboard:
 
     def _progress_label_width(self) -> int:
         labels = [
-            state.spec.subject or state.spec.label
+            state.display_subject or state.display_process
             for state in self._states
             if _is_progress_state(state)
         ]
@@ -366,6 +397,8 @@ async def _run_process_group(
                 lambda *, force: live.update(dashboard, refresh=force),
                 cancel_on_failure=cancel_on_failure,
             )
+    if log.fancy_output_enabled():
+        _replay_failed_tails(states)
     return ProcessGroupResult(
         processes=tuple(_result_from_state(state) for state in states)
     )
@@ -512,12 +545,30 @@ def _record_entry(state: _ProcessState, entry: LogEntry) -> None:
         detail = entry.get("lograil.status.detail")
     else:
         detail = entry.get("message")
+    if not isinstance(detail, str) or not detail:
+        detail = entry.get(remap.PROGRESS_DESCRIPTION)
     if isinstance(detail, str) and detail:
         state.detail = detail
+    display_process = entry.get(remap.PROGRESS_PROCESS)
+    display_subject = entry.get(remap.PROGRESS_SUBJECT)
+    if isinstance(display_process, str) and display_process:
+        state.display_process = display_process
+    if isinstance(display_subject, str) and display_subject:
+        state.display_subject = display_subject
     total = entry.get(remap.PROGRESS_TOTAL)
     completed = entry.get(remap.PROGRESS_COMPLETED)
     if isinstance(total, int) and isinstance(completed, int):
         state.total = total
+        state.completed = completed
+    elif (
+        remap.PROGRESS_DESCRIPTION in entry
+        and isinstance(completed, int)
+        and remap.PROGRESS_TOTAL not in entry
+    ):
+        # Native producers omit total for indeterminate stages such as
+        # collection, setup, and teardown.  Clear the preceding stage's
+        # determinate total instead of leaving a completed run bar visible.
+        state.total = None
         state.completed = completed
 
 
@@ -557,7 +608,20 @@ def _result_from_state(state: _ProcessState) -> ProcessResult:
     )
 
 
+def _replay_failed_tails(states: Sequence[_ProcessState]) -> None:
+    """Permanently replay bounded output for failed fancy dashboards."""
+    for state in states:
+        if state.success:
+            continue
+        for entry in state.tail:
+            emit_entry(entry, show_context=True)
+
+
 def _is_progress_state(state: _ProcessState) -> bool:
+    if state.spec.layout == "progress":
+        return True
+    if state.spec.layout == "spinner":
+        return False
     return state.total is not None or state.parser.capabilities.starts_progress
 
 
@@ -585,8 +649,10 @@ def _state_spinner(state: _ProcessState, text: Text, *, style: str) -> Spinner:
     return state.spinner
 
 
-def _spinner_cell(state: _ProcessState) -> RenderableType:
-    label = _grouped_cell_text(state)
+def _spinner_cell(
+    state: _ProcessState, *, max_width: int | None = _GROUPED_CELL_WIDTH - 2
+) -> RenderableType:
+    label = _grouped_cell_text(state, max_width=max_width)
     if state.running:
         return _state_spinner(state, label, style="cyan")
     if state.success:
@@ -594,13 +660,33 @@ def _spinner_cell(state: _ProcessState) -> RenderableType:
     return Text.assemble(Text("✗", style="red"), " ", label)
 
 
-def _grouped_cell_text(state: _ProcessState) -> Text:
-    text = Text(state.spec.label, no_wrap=True, overflow="ellipsis")
+def _grouped_cell_text(
+    state: _ProcessState, *, max_width: int | None = _GROUPED_CELL_WIDTH - 2
+) -> Text:
+    text = Text(state.display_process, no_wrap=True, overflow="ellipsis")
+    if state.display_subject is not None:
+        text.append(" ")
+        subject_width = (
+            max_width - text.cell_len
+            if max_width is not None
+            else Text(state.display_subject).cell_len
+        )
+        if state.detail and max_width is not None:
+            # Keep enough room for a useful prefix of the latest output while
+            # always retaining the structured subject that owns the process.
+            subject_width = min(subject_width, max(8, max_width // 2))
+        subject = _fixed_text(
+            state.display_subject,
+            subject_width,
+            pad=False,
+        )
+        subject.stylize("bold blue")
+        text.append_text(subject)
     if state.detail:
         text.append(" ")
-        text.append(state.detail, style="dim")
-    if text.cell_len > _GROUPED_CELL_WIDTH - 2:
-        text.truncate(_GROUPED_CELL_WIDTH - 2, overflow="ellipsis")
+        text.append(_single_line_detail(state.detail), style="dim")
+    if max_width is not None and text.cell_len > max_width:
+        text.truncate(max_width, overflow="ellipsis")
     return text
 
 
@@ -620,12 +706,6 @@ def _progress_renderable(
     return Text.assemble(_done_marker(state), " ", body)
 
 
-def _progress_values(state: _ProcessState) -> tuple[int, int]:
-    if state.total is None:
-        return 0, 100
-    return state.completed or 0, state.total
-
-
 def _done_marker(state: _ProcessState) -> Text:
     if state.success:
         return Text("✓", style="green")
@@ -635,15 +715,45 @@ def _done_marker(state: _ProcessState) -> Text:
 def _progress_body(
     state: _ProcessState, *, label_width: int, max_width: int
 ) -> Text:
-    label = _fixed_text(state.spec.subject or state.spec.label, label_width)
-    completed, total = _progress_values(state)
+    label = _fixed_text(
+        state.display_subject or state.display_process,
+        label_width,
+    )
+    if state.total is None:
+        return _indeterminate_progress_body(
+            label,
+            detail=_progress_detail(state),
+            max_width=max_width,
+        )
     return _progress_body_with_bar(
         label,
-        completed=completed,
-        total=total,
+        completed=state.completed or 0,
+        total=state.total,
         detail=_progress_detail(state),
         max_width=max_width,
     )
+
+
+def _indeterminate_progress_body(
+    label: Text,
+    *,
+    detail: str,
+    max_width: int,
+) -> Text:
+    text = label
+    detail_width = max(0, max_width - label.cell_len - 1)
+    if detail and detail_width:
+        text.append(" ")
+        detail_text = _fixed_text(
+            _single_line_detail(detail),
+            detail_width,
+            pad=False,
+        )
+        detail_text.stylize("dim")
+        text.append_text(detail_text)
+    text.no_wrap = True
+    text.overflow = "ellipsis"
+    return text
 
 
 def _progress_detail(state: _ProcessState) -> str:

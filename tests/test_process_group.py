@@ -16,15 +16,18 @@ from unittest.mock import patch
 import pytest
 from rich.console import Console
 
-from lograil import ProcessSpec, configure_logging, run_process_group
+from lograil import ProcessSpec, configure_logging, run_process_group, status
 from lograil._internal import progress, remap
 from lograil._internal.process import (
     _CANCELLED_EXIT_CODE,
+    _DashboardRenderable,
+    _grouped_cell_text,
     _parser_binding_for,
     _parser_for,
     _ProcessDashboard,
     _ProcessState,
     _record_entry,
+    _replay_failed_tails,
 )
 from lograil.parsers import OutputParserCapabilities, register_output_parser
 from lograil.parsers._base import registered_output_parsers
@@ -60,6 +63,109 @@ class _ProgressParser:
     def __call__(self, entry: dict[str, Any]) -> dict[str, Any]:
         entry["lograil.status.detail"] = str(entry.get("message", ""))
         return entry
+
+
+def test_grouped_process_label_includes_subject() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["make"],
+            process="build",
+            subject="postgresql (17.6+r1)",
+        )
+    )
+
+    rendered = _grouped_cell_text(state)
+
+    assert rendered.plain == "build postgresql (17.6+r1)"
+
+
+def test_grouped_process_label_keeps_subject_and_latest_output() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["make"],
+            process="build",
+            subject="postgresql (17.6+r1.s96d88a2)",
+        )
+    )
+    state.detail = "c++ compiling a very long source filename"
+
+    rendered = _grouped_cell_text(state)
+
+    assert "postgresql" in rendered.plain
+    assert "c++" in rendered.plain
+
+
+def test_single_process_dashboard_keeps_full_subject_on_one_line() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["make"],
+            process="build",
+            subject="postgresql (17.6+r1.s96d88a2)",
+        )
+    )
+    state.detail = "c++ compiling\na source file"
+
+    rendered = _grouped_cell_text(state, max_width=None)
+
+    assert rendered.plain == (
+        "build postgresql (17.6+r1.s96d88a2) c++ compiling a source file"
+    )
+
+
+def test_single_process_dashboard_abbreviates_instead_of_wrapping() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["make"],
+            process="build",
+            subject="postgresql (17.6+r1.s96d88a2)",
+        )
+    )
+    state.detail = "chmod a-w providers/common/include/prov/der_ml_dsa.h"
+    dashboard = _ProcessDashboard([state])
+    capture_console = Console(
+        record=True,
+        width=60,
+        file=io.StringIO(),
+        force_terminal=False,
+    )
+
+    capture_console.print(dashboard.render(width=60))
+    rendered = capture_console.export_text().rstrip("\n")
+
+    assert rendered.count("\n") == 0
+    assert len(rendered) <= 60
+    assert rendered.endswith("…")
+    assert "build postgresql" in rendered
+
+
+def test_live_dashboard_adapter_uses_actual_terminal_width() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["make"],
+            process="build",
+            subject="postgresql",
+        )
+    )
+    state.display_subject = "icu (78.3)"
+    state.detail = (
+        "   c++        ... "
+        "../../../../postgresql/thirdparty/icu/source/common/utrie_swap.cpp"
+    )
+    renderable = _DashboardRenderable(_ProcessDashboard([state]))
+    capture_console = Console(
+        record=True,
+        width=60,
+        file=io.StringIO(),
+        force_terminal=False,
+    )
+
+    capture_console.print(renderable)
+    rendered = capture_console.export_text().rstrip("\n")
+
+    assert rendered.count("\n") == 0
+    assert len(rendered) <= 60
+    assert rendered.endswith("…")
+    assert "build icu (78.3)" in rendered
 
 
 class _RecordingLive:
@@ -127,6 +233,28 @@ def test_process_group_runs_multiple_processes_concurrently(
 
     assert result.success is True
     assert {item.last_message for item in result.processes} == {"one", "two"}
+
+
+def test_process_group_restores_owning_nested_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    configure_logging()
+
+    with status(process="build", subject="all packages", done=None) as root:
+        assert root._status is not None
+        with status(process="build", subject="postgresql", done=None):
+            result = run_process_group([
+                ProcessSpec(
+                    _python(_print_stderr("compiled")),
+                    process="build",
+                    subject="postgresql",
+                    stream="combined",
+                )
+            ])
+            assert result.success is True
+            assert root._status.status.plain == "build postgresql"
+        assert root._status.status.plain == "build all packages"
 
 
 def test_process_group_completes_all_processes_when_one_fails(
@@ -236,6 +364,19 @@ def test_process_group_records_spawn_failure_without_cancelling_sibling(
     assert by_name["missing"].last_message is not None
     assert "failed to start" in by_name["missing"].last_message
     assert by_name["good"].success is True
+
+
+def test_fancy_failed_process_replays_bounded_tail() -> None:
+    configure_logging()
+    state = _ProcessState(ProcessSpec(["tool"], name="tool"))
+    _record_entry(state, {"message": "last output", "levelname": "INFO"})
+    state.running = False
+    state.exit_code = 1
+
+    with patch("lograil._internal.process.emit_entry") as emit:
+        _replay_failed_tails([state])
+
+    emit.assert_called_once_with(state.tail[0], show_context=True)
 
 
 def test_process_group_routes_output_metadata(
@@ -372,9 +513,119 @@ def test_dashboard_renders_pytest_as_progress_from_start() -> None:
 
     assert "✓ vercel" in rendered
     assert "root" in rendered
-    assert "0%" in rendered
+    assert "0%" not in rendered
     assert "starting pytest" in rendered
     assert not rendered.startswith("test ")
+
+
+def test_dashboard_layout_can_force_progress_without_parser_capability() -> (
+    None
+):
+    state = _ProcessState(
+        ProcessSpec(
+            ["ggt"],
+            name="vercel",
+            category="test",
+            parser="generic",
+            layout="progress",
+        )
+    )
+    dashboard = _ProcessDashboard([state])
+    capture_console = Console(record=True, width=100, file=io.StringIO())
+
+    capture_console.print(dashboard)
+    rendered = capture_console.export_text()
+
+    assert "vercel" in rendered
+    assert "0%" not in rendered
+    assert "starting pytest" not in rendered
+
+
+def test_progress_label_column_keeps_long_package_names_distinct() -> None:
+    first = _ProcessState(
+        ProcessSpec(
+            ["ggt"],
+            name="test/vercel-internal-core",
+            layout="progress",
+        )
+    )
+    second = _ProcessState(
+        ProcessSpec(
+            ["ggt"],
+            name="test/vercel-internal-telemetry",
+            layout="progress",
+        )
+    )
+    dashboard = _ProcessDashboard([first, second])
+    capture_console = Console(record=True, width=120, file=io.StringIO())
+
+    capture_console.print(dashboard)
+    rendered = capture_console.export_text()
+
+    assert "test/vercel-internal-core" in rendered
+    assert "test/vercel-internal-telemetry" in rendered
+
+
+def test_process_layout_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="unknown process layout: grid"):
+        _ProcessState(ProcessSpec(["tool"], layout="grid"))  # type: ignore[arg-type]
+
+
+def test_dashboard_layout_can_force_spinner_for_progress_parser() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["pytest"],
+            name="vercel",
+            category="test",
+            layout="spinner",
+        )
+    )
+    dashboard = _ProcessDashboard([state])
+    capture_console = Console(record=True, width=100, file=io.StringIO())
+
+    capture_console.print(dashboard)
+    rendered = capture_console.export_text()
+
+    assert "vercel" in rendered
+    assert "0%" not in rendered
+
+
+@pytest.mark.parametrize("total", [None, 0])
+def test_successful_explicit_progress_finishes_at_100_percent(
+    total: int | None,
+) -> None:
+    state = _ProcessState(
+        ProcessSpec(["ggt"], name="vercel-headers", layout="progress")
+    )
+    state.completed = 0
+    state.total = total
+    dashboard = _ProcessDashboard([state])
+
+    dashboard.finish(state, 0)
+
+    assert state.completed == 1
+    assert state.total == 1
+    assert (
+        progress.progress_percent(
+            completed=state.completed,
+            total=state.total,
+        )
+        == 100
+    )
+
+
+def test_failed_explicit_progress_does_not_claim_completion() -> None:
+    state = _ProcessState(
+        ProcessSpec(["ggt"], name="vercel-headers", layout="progress")
+    )
+    state.completed = 0
+    state.total = 0
+    dashboard = _ProcessDashboard([state])
+
+    dashboard.finish(state, 1)
+
+    assert state.completed == 0
+    assert state.total == 0
 
 
 def test_dashboard_pytest_detail_does_not_wrap() -> None:
@@ -800,6 +1051,107 @@ def test_record_entry_ignores_legacy_pytest_percent_key() -> None:
 
     assert state.completed is None
     assert state.total == 4
+
+
+def test_record_entry_uses_structured_progress_description_as_detail() -> None:
+    state = _ProcessState(
+        ProcessSpec(["ggt"], name="vercel", layout="progress")
+    )
+
+    _record_entry(
+        state,
+        {
+            "lograil.progress.description": "tests/test_api.py::test_get",
+            "lograil.progress.completed": 1,
+            "lograil.progress.total": 2,
+        },
+    )
+
+    assert state.detail == "tests/test_api.py::test_get"
+    assert state.completed == 1
+    assert state.total == 2
+
+
+def test_indeterminate_teardown_replaces_completed_run_progress() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["ggt"],
+            name="test/vercel-headers",
+            layout="progress",
+        )
+    )
+    _record_entry(
+        state,
+        {
+            "lograil.progress.description": "test_headers.py::test_get",
+            "lograil.progress.completed": 1,
+            "lograil.progress.total": 1,
+        },
+    )
+    _record_entry(
+        state,
+        {
+            "lograil.progress.description": "Tearing down test classes",
+            "lograil.progress.completed": 0,
+        },
+    )
+    dashboard = _ProcessDashboard([state])
+    capture_console = Console(record=True, width=100, file=io.StringIO())
+
+    capture_console.print(dashboard)
+    rendered = capture_console.export_text()
+
+    assert state.total is None
+    assert state.completed == 0
+    assert "Tearing down test classes" in rendered
+    assert "100%" not in rendered
+
+
+def test_summary_restores_determinate_progress_after_teardown() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["ggt"],
+            name="test/vercel-headers",
+            layout="progress",
+        )
+    )
+    state.total = None
+    state.completed = 0
+
+    _record_entry(
+        state,
+        {
+            "lograil.progress.description": "SUCCESS: 1 tests",
+            "lograil.progress.completed": 1,
+            "lograil.progress.total": 1,
+        },
+    )
+
+    assert state.total == 1
+    assert state.completed == 1
+
+
+def test_record_entry_replaces_display_identity_without_stacking() -> None:
+    state = _ProcessState(
+        ProcessSpec(
+            ["make"],
+            process="build",
+            subject="postgresql (17.6+r1)",
+        )
+    )
+
+    _record_entry(
+        state,
+        {
+            "message": "configure",
+            "lograil.progress.process": "build",
+            "lograil.progress.subject": "openssl (4.0.1+r1)",
+        },
+    )
+
+    rendered = _grouped_cell_text(state, max_width=None)
+    assert rendered.plain == "build openssl (4.0.1+r1) configure"
+    assert "postgresql" not in rendered.plain
 
 
 def test_pytest_dashboard_percent_matches_pytest_output() -> None:

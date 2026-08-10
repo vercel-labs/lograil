@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     "anyio>=4.0",
     "rich>=14.0",
+    "typing-extensions>=4.0",
 ]
 
 [project.scripts]
