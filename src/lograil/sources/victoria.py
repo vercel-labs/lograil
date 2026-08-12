@@ -341,7 +341,12 @@ class VictoriaLogsSource(LogSource, source_id="victoria"):
             str(query.get("query", "*")) if query is not None else "*"
         )
         url = f"{self.base_url}/select/logsql/tail"
-        resume_from: str | None = None
+        requested_start = query.get("start") if query is not None else None
+        resume_from = (
+            str(requested_start)
+            if requested_start is not None and str(requested_start)
+            else None
+        )
         reconnecting = False
         while not stop.is_set():
             # Catch-up cursor: set only when reconnecting with a known

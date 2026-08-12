@@ -5,11 +5,12 @@ from __future__ import annotations
 from typing_extensions import Self
 
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 
 import httpx
 import pytest
 
+from lograil import LogEntry
 from lograil.sources.victoria import (
     VictoriaLogsSource,
     VictoriaLogsStreamError,
@@ -91,6 +92,29 @@ def test_victoria_source_exposes_open_method() -> None:
     source = VictoriaLogsSource()
 
     assert callable(source.open)
+
+
+def test_victoria_source_passes_requested_start_to_first_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = VictoriaLogsSource(base_url="http://victoria")
+    stop = threading.Event()
+    captured: list[str | None] = []
+
+    def fake_stream_entries(
+        *args: object, **kwargs: object
+    ) -> Iterator[LogEntry]:
+        _ = args
+        captured.append(kwargs["resume_from"])
+        stop.set()
+        return iter(())
+
+    monkeypatch.setattr(source, "_stream_entries", fake_stream_entries)
+
+    with source.open(stop=stop, query={"query": "*", "start": "5m"}) as entries:
+        list(entries)
+
+    assert captured == ["5m"]
 
 
 def test_victoria_source_default_read_timeout_is_bounded() -> None:
