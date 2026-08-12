@@ -148,6 +148,11 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _quote_regex(value: str) -> str:
+    """Quote a LogsQL regex without re-escaping its regex backslashes."""
+    return '"' + value.replace('"', '\\"') + '"'
+
+
 def _normalize_severity(value: str) -> str:
     aliases = {"WARNING": "WARN", "FATAL": "CRITICAL"}
     normalized = aliases.get(value.upper(), value.upper())
@@ -207,10 +212,14 @@ def build_logsql_query(
             if "*" not in svc:
                 service_filters.append(f"service:={_quote(svc)}")
             elif svc.endswith("*") and "*" not in svc[:-1]:
-                service_filters.append(f"service:{_quote(svc[:-1])}*")
+                prefix = svc[:-1]
+                if re.fullmatch(r"[\w@./-]+", prefix):
+                    service_filters.append(f"service:{prefix}*")
+                else:
+                    service_filters.append(f"service:{_quote(prefix)}*")
             else:
                 regex = re.escape(svc).replace(r"\*", ".*")
-                service_filters.append(f"service:~{_quote(f'^{regex}$')}")
+                service_filters.append(f"service:~{_quote_regex(f'^{regex}$')}")
         parts.append(
             service_filters[0]
             if len(service_filters) == 1

@@ -109,7 +109,7 @@ def test_build_logsql_query_supports_filters() -> None:
 
     assert 'deployment_id:="dpl_abc123"' in result
     assert 'run_id:="run-123"' in result
-    assert 'service:~"^functions/.*/51\\\\-litellm.*$"' in result
+    assert 'service:~"^functions/.*/51\\-litellm.*$"' in result
     assert 'severity:in("ERROR","CRITICAL")' in result
 
 
@@ -121,6 +121,12 @@ def test_build_logsql_query_escapes_filter_values() -> None:
 
     assert 'deployment_id:="dpl\\"x\\\\y"' in result
     assert 'service:"api\\" OR "*' in result
+
+
+def test_build_logsql_query_preserves_safe_prefix_syntax() -> None:
+    result = build_logsql_query(services=["functions/team*"])
+
+    assert "service:functions/team*" in result
 
 
 def test_build_logsql_query_accepts_severity_aliases() -> None:
