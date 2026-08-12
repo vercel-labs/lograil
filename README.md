@@ -182,6 +182,35 @@ register_output_parser(
 run_process_group([ProcessSpec(["suite-runner", "test"])])
 ```
 
+Built-in parsers also cover pnpm's NDJSON reporter, Turbo cache-status output,
+and Terraform plan/apply progress. The pnpm and Turbo parsers retain their raw
+input in `captured_output` for failure diagnosis. Terraform's reusable JSON and
+text helpers are available from `lograil.parsers`:
+
+```python
+from lograil.parsers import (
+    TerraformApplyOutputParser,
+    TerraformPlanOutputParser,
+    planned_apply_addresses,
+    state_resource_addresses,
+)
+
+changed = planned_apply_addresses(plan_json)
+existing = state_resource_addresses(state_json)
+
+plan_parser = TerraformPlanOutputParser(
+    workspace="networking",
+    refresh_addresses=existing,
+    planned_addresses=changed,
+    subject="terraform/networking",
+)
+apply_parser = TerraformApplyOutputParser(
+    workspace="networking",
+    addresses=changed,
+    subject="terraform/networking",
+)
+```
+
 ## Progress reporting from child processes
 
 Children emit machine-readable progress lines on stdout; the parent's tailer
