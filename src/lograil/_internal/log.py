@@ -224,6 +224,25 @@ def should_show_error_traceback() -> bool:
     return _should_show_error_traceback(_env_filter, logger_name)
 
 
+def is_debug() -> bool:
+    """Return whether DEBUG records are enabled for the configured logger."""
+    return _env_filter.enabled_for(_logger.name, logging.DEBUG)
+
+
+def severity_name() -> str:
+    """Return the configured threshold as a normalized severity name."""
+    level = _env_filter.level_for(_logger.name)
+    if level is None or level >= logging.CRITICAL:
+        return "CRITICAL"
+    if level >= logging.ERROR:
+        return "ERROR"
+    if level >= logging.WARNING:
+        return "WARN"
+    if level >= logging.INFO:
+        return "INFO"
+    return "DEBUG"
+
+
 def _should_show_error_traceback(
     env_filter: EnvFilter, logger_name: str = LOGGER_NAME
 ) -> bool:
@@ -299,6 +318,13 @@ class LograilHandler(logging.Handler):
         """Emit ``record`` through the configured delegate handler."""
         self._handler.emit(record)
 
+    def set_timestamps(self, *, enabled: bool) -> None:
+        """Enable or disable timestamps when using the fancy handler."""
+        if not isinstance(self._handler, RichHandler):
+            return
+        self._handler._log_render.show_time = enabled
+        self._handler._log_render.omit_repeated_times = False
+
 
 def _setup_logging(
     env_filter: EnvFilter,
@@ -344,6 +370,14 @@ def configure_logging(
             _env_filter, logger_name=LOGGER_NAME, output_mode=_output_mode
         )
     return _logger
+
+
+def set_timestamps(*, enabled: bool) -> None:
+    """Enable or disable timestamps on configured fancy log handlers."""
+    for logger in {_logger, logging.getLogger(LOGGER_NAME)}:
+        for handler in logger.handlers:
+            if isinstance(handler, LograilHandler):
+                handler.set_timestamps(enabled=enabled)
 
 
 def tail_logger() -> logging.Logger:

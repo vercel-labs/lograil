@@ -83,6 +83,16 @@ def test_tail_to_status_uses_generic_source(
     assert any("Ready" in message for message in messages)
 
 
+def test_tail_to_status_lingers_before_stopping_source() -> None:
+    configure_logging()
+    started = time.monotonic()
+
+    with tail_to_status(source=FakeSource([]), delay=0, linger=0.02):
+        pass
+
+    assert time.monotonic() - started >= 0.015
+
+
 def test_tail_to_status_routes_progress_lines_to_active_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

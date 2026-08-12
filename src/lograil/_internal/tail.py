@@ -254,6 +254,7 @@ def tail_to_status(
     source: LogSource | None = None,
     filters: LogQuery | None = None,
     delay: float = 0.1,
+    linger: float = 0.0,
     lossy: bool = True,
     persistent: bool = False,
     show_context: bool = False,
@@ -273,7 +274,9 @@ def tail_to_status(
     timestamped lines in plain mode or when ``persistent`` is true, and
     NDJSON records in json mode.  Warnings and errors always print
     permanently, and the configured env filter applies in every mode.
-    ``remaps`` overrides the default entry pipeline, and ``filters`` is
+    ``linger`` keeps the source open briefly after the wrapped operation,
+    allowing late-arriving entries to render. ``remaps`` overrides the
+    default entry pipeline, and ``filters`` is
     passed through to the source's ``open()``.  ``delay`` postpones
     opening the source (letting an enclosing status settle first); the
     source is opened and consumed even when the ``with`` block finishes
@@ -338,6 +341,8 @@ def tail_to_status(
     try:
         yield drained
     finally:
+        if linger > 0:
+            stop.wait(linger)
         stop.set()
         thread.join(timeout=2.0)
         progress_renderer.finish()

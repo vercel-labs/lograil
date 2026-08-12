@@ -90,6 +90,34 @@ def test_configure_logging_uses_app_specific_envvar(
         lograil.configure_logging(default="info")
 
 
+def test_runtime_level_helpers_follow_configured_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_LOG", "debug")
+    lograil.configure_logging(envvar="APP_LOG", logger_name="app")
+
+    try:
+        assert lograil.is_debug() is True
+        assert lograil.severity_name() == "DEBUG"
+    finally:
+        lograil.configure_logging(default="info")
+
+
+def test_set_timestamps_updates_fancy_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    logger = lograil.configure_logging()
+
+    try:
+        lograil.set_timestamps(enabled=True)
+        handler = logger.handlers[0]
+        assert isinstance(handler, lograil.LograilHandler)
+        assert handler._handler._log_render.show_time is True
+    finally:
+        lograil.configure_logging(default="info")
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
