@@ -36,6 +36,7 @@ def test_top_level_all_is_curated_public_surface() -> None:
         "format_log_entry",
         "format_progress_line",
         "lograil_instrumentation_env",
+        "parse_progress_line",
         "quiet",
         "progress",
         "register_output_parser",

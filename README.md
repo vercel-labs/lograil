@@ -225,6 +225,10 @@ for i, item in enumerate(items):
     handle(item)
 ```
 
+Compatibility adapters can retain an existing child-process protocol by
+passing a custom `prefix` to `format_progress_line`, `emit_progress`, and
+`parse_progress_line`.
+
 ```python
 # parent: opt the child in and let the subprocess source pick lines up
 import os

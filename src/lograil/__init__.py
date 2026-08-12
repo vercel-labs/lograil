@@ -29,6 +29,7 @@ from lograil._internal.progress import (
     emit_line as emit_progress_line,
     format_line as format_progress_line,
     lograil_instrumentation_env,
+    parse as parse_progress_line,
 )
 from lograil._internal.remap import DEFAULT_REMAPS, Remap, RemapPipeline
 from lograil._internal.tail import (
@@ -72,6 +73,7 @@ __all__ = [
     "format_log_entry",
     "format_progress_line",
     "lograil_instrumentation_env",
+    "parse_progress_line",
     "progress",
     "quiet",
     "register_output_parser",
