@@ -33,6 +33,21 @@ def test_status_json_mode_preserves_ndjson_records(
     assert "warn" in messages
 
 
+def test_status_can_disable_animation_in_fancy_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    lograil.configure_logging(default="debug")
+
+    with lograil.status("working", done="finished", animate=False) as handle:
+        assert handle._status is None
+
+    output = capsys.readouterr().err
+    assert "working" in output
+    assert "finished" in output
+
+
 def test_update_status_subject_only_without_active_status_logs_plain(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

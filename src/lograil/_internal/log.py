@@ -839,6 +839,7 @@ def status(
     sticky: bool = False,
     process: str | None = None,
     subject: str | None = None,
+    animate: bool | None = None,
 ) -> Iterator[StatusHandle]:
     """Render a task status for the duration of the ``with`` block.
 
@@ -852,9 +853,11 @@ def status(
     ``process``/``subject`` compose a structured label instead of
     ``message``.  ``sticky=True`` makes this status's message the prefix
     for nested statuses and tailed log lines.  Yields a
-    :class:`StatusHandle` for mid-flight updates and cancellation.
+    :class:`StatusHandle` for mid-flight updates and cancellation. Set
+    ``animate=False`` to log status lines even when fancy output is enabled.
     """
-    if fancy_output_enabled():
+    use_spinner = fancy_output_enabled() if animate is None else animate
+    if use_spinner:
         # User-supplied text is untrusted: escape it here, at the entry
         # point, so everything downstream is trusted markup.
         if isinstance(message, str):
@@ -885,7 +888,7 @@ def status(
         sticky_token = _sticky_state.set(_sticky_state.get())
 
     try:
-        if output_mode() != "fancy":
+        if not use_spinner:
             _logger.info(message)
             handle = StatusHandle(
                 _status=None, done=done, _restore_message=message
