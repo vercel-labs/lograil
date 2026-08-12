@@ -30,6 +30,22 @@ def test_format_and_parse_structured_status() -> None:
     assert parsed.total == 2
 
 
+def test_progress_separator_round_trips() -> None:
+    line = format_progress_line(
+        description="archive members",
+        process="extracting",
+        subject="source.tar.gz",
+        separator=": ",
+        completed=1,
+        total=2,
+    )
+
+    parsed = progress.parse(line)
+
+    assert parsed is not None
+    assert parsed.separator == ": "
+
+
 def test_parse_rejects_bad_payload() -> None:
     assert progress.parse("::lograil-progress::[]") is None
     assert progress.parse("not progress") is None

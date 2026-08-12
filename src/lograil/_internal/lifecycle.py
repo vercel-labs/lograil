@@ -108,6 +108,7 @@ class ProgressHandle:
         subject: str,
         description: str,
         total: int | None = None,
+        separator: str = " ",
         interval: float = 0.1,
     ) -> None:
         if total is not None and total < 0:
@@ -116,6 +117,7 @@ class ProgressHandle:
         self.subject = subject
         self.description = description
         self.total = total
+        self.separator = separator
         self.completed = 0
         self.interval = interval
         self._renderer: StatusProgressRenderer | None = None
@@ -175,6 +177,7 @@ class ProgressHandle:
             total=self.total,
             process=self.process,
             subject=self.subject,
+            separator=self.separator,
             clear_label=clear_label,
         )
 
@@ -196,6 +199,7 @@ class ProgressHandle:
             "lograil.subject": self.subject,
             "lograil.progress.description": self.description,
             "lograil.progress.completed": self.completed,
+            "lograil.progress.separator": self.separator,
         }
         if self.total is not None:
             data["lograil.progress.total"] = self.total
@@ -211,6 +215,7 @@ def progress(
     subject: str,
     description: str,
     total: int | None = None,
+    separator: str = " ",
 ) -> ProgressHandle:
     """Create a context-managed progress handle."""
     return ProgressHandle(
@@ -218,4 +223,5 @@ def progress(
         subject=subject,
         description=description,
         total=total,
+        separator=separator,
     )

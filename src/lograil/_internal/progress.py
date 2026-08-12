@@ -61,6 +61,7 @@ class ProgressUpdate:
     label: str | None = None
     process: str | None = None
     subject: str | None = None
+    separator: str = " "
     clear_label: bool = False
 
     @classmethod
@@ -72,6 +73,7 @@ class ProgressUpdate:
         label = data.get("label")
         process = data.get("process")
         subject = data.get("subject")
+        separator = data.get("separator", " ")
         clear_label = data.get("clear_label", False)
         if not isinstance(description, str):
             return None
@@ -85,6 +87,8 @@ class ProgressUpdate:
             return None
         if subject is not None and not isinstance(subject, str):
             return None
+        if not isinstance(separator, str):
+            return None
         if not isinstance(clear_label, bool):
             return None
         return cls(
@@ -94,6 +98,7 @@ class ProgressUpdate:
             label=label,
             process=process,
             subject=subject,
+            separator=separator,
             clear_label=clear_label,
         )
 
@@ -116,6 +121,7 @@ def format_line(
     label: str | None = None,
     process: str | None = None,
     subject: str | None = None,
+    separator: str = " ",
     clear_label: bool = False,
     prefix: str = _PROGRESS_LINE_PREFIX,
 ) -> str:
@@ -132,6 +138,8 @@ def format_line(
         payload["process"] = process
     if subject is not None:
         payload["subject"] = subject
+    if separator != " ":
+        payload["separator"] = separator
     if clear_label:
         payload["clear_label"] = True
     return prefix + json.dumps(payload, sort_keys=True)
@@ -150,6 +158,7 @@ def emit(
     label: str | None = None,
     process: str | None = None,
     subject: str | None = None,
+    separator: str = " ",
     clear_label: bool = False,
     prefix: str = _PROGRESS_LINE_PREFIX,
 ) -> None:
@@ -162,6 +171,7 @@ def emit(
             label=label,
             process=process,
             subject=subject,
+            separator=separator,
             clear_label=clear_label,
             prefix=prefix,
         )
@@ -354,7 +364,7 @@ class StatusProgressRenderer:
                         total=update.total,
                     ),
                     sticky_prefix=description,
-                    sticky_separator=" ",
+                    sticky_separator=update.separator,
                     sticky_subject=subject,
                 )
                 self._progress = None

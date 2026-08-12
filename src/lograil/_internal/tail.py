@@ -96,6 +96,7 @@ def _progress_update_from_entry(
         "label": entry.get(remap.PROGRESS_LABEL),
         "process": entry.get(remap.PROGRESS_PROCESS),
         "subject": entry.get(remap.PROGRESS_SUBJECT),
+        "separator": entry.get(remap.PROGRESS_SEPARATOR, " "),
         "clear_label": entry.get(remap.PROGRESS_CLEAR_LABEL, False),
     })
 

@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console
+from rich.markup import render as render_markup
 
 from lograil import ProcessSpec, configure_logging, run_process_group, status
 from lograil._internal import progress, remap
@@ -398,6 +399,76 @@ def test_process_group_routes_output_metadata(
     assert entry["lograil.process"] == "ruff"
     assert entry["lograil.subject"] == "pkg-a"
     assert entry["lograil.category"] == "lint"
+
+
+def test_plain_process_output_uses_parsed_status_and_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "plain")
+    configure_logging()
+
+    def concise(entry: dict[str, Any]) -> dict[str, Any]:
+        entry["lograil.status.detail"] = "CC crypto/asn1/asn_mstbl.c"
+        return entry
+
+    with patch("lograil._internal.console.stderr_console.print") as mock_print:
+        result = run_process_group([
+            ProcessSpec(
+                _python(_print_stderr("cc -many flags asn_mstbl.c")),
+                process="building",
+                subject="openssl (4.0.1)",
+                parser=concise,
+            )
+        ])
+
+    assert result.success is True
+    rendered = mock_print.call_args.args[0]
+    rendered_text = (
+        rendered.plain
+        if hasattr(rendered, "plain")
+        else render_markup(rendered).plain
+    )
+    assert rendered_text.endswith(
+        "building openssl (4.0.1) CC crypto/asn1/asn_mstbl.c"
+    )
+    assert result.processes[0].tail[-1]["message"] == (
+        "cc -many flags asn_mstbl.c"
+    )
+
+
+def test_plain_progress_uses_action_subject_separator_and_percent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "plain")
+    configure_logging()
+    line = progress.format_line(
+        description="src/backend/main.c",
+        process="extracting",
+        subject="source.tar.gz",
+        separator=": ",
+        completed=2,
+        total=4,
+    )
+
+    with patch("lograil._internal.console.stderr_console.print") as mock_print:
+        result = run_process_group([
+            ProcessSpec(
+                _python(f"print({line!r})"),
+                name="tar",
+                env={**os.environ, **progress.lograil_instrumentation_env()},
+            )
+        ])
+
+    assert result.success is True
+    rendered = mock_print.call_args.args[0]
+    rendered_text = (
+        rendered.plain
+        if hasattr(rendered, "plain")
+        else render_markup(rendered).plain
+    )
+    assert rendered_text.endswith(
+        "extracting source.tar.gz:  50% src/backend/main.c"
+    )
 
 
 def test_process_group_default_stream_captures_instrumented_progress(
@@ -803,7 +874,7 @@ def test_pytest_unknown_total_keeps_spinner_only_status(
     assert not any("lograil.progress.total" in entry for entry in process.tail)
 
 
-def test_plain_process_group_interprets_child_ansi_output(
+def test_plain_process_group_renders_parsed_status_and_retains_child_ansi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LOGRAIL_OUTPUT", "plain")
@@ -824,8 +895,13 @@ def test_plain_process_group_interprets_child_ansi_output(
 
     assert result.success is True
     rendered = mock_print.call_args.args[0]
-    assert rendered.plain.endswith("[ 50%]PASSED tests/test_a.py::test_one")
-    assert rendered.spans
+    rendered_text = (
+        rendered.plain
+        if hasattr(rendered, "plain")
+        else render_markup(rendered).plain
+    )
+    assert rendered_text.endswith("pytest tests/test_a.py::test_one")
+    assert result.processes[0].tail[-1]["message"].startswith("\x1b[36m")
 
 
 def test_pytest_parser_is_auto_selected_for_any_pytest_command() -> None:
@@ -1144,13 +1220,13 @@ def test_record_entry_replaces_display_identity_without_stacking() -> None:
         state,
         {
             "message": "configure",
-            "lograil.progress.process": "build",
+            "lograil.progress.process": "configuring",
             "lograil.progress.subject": "openssl (4.0.1+r1)",
         },
     )
 
     rendered = _grouped_cell_text(state, max_width=None)
-    assert rendered.plain == "build openssl (4.0.1+r1) configure"
+    assert rendered.plain == "configuring openssl (4.0.1+r1) configure"
     assert "postgresql" not in rendered.plain
 
 

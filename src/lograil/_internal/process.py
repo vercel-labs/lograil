@@ -119,6 +119,7 @@ class _ProcessState:
     parser: OutputParserBinding = field(init=False)
     display_process: str = field(init=False)
     display_subject: str | None = field(init=False)
+    display_separator: str = " "
     running: bool = True
     exit_code: int | None = None
     detail: str | None = None
@@ -329,8 +330,9 @@ def run_process_group(
     """Run subprocesses concurrently and render their status.
 
     In fancy output mode the group renders as a live dashboard (spinner,
-    per-process progress, exit markers); in plain and json modes each
-    output line is emitted as it arrives.  Per-process failures --
+    per-process progress, exit markers).  Plain mode emits each parsed
+    dashboard update as a durable line; JSON emits each lossless structured
+    entry as it arrives.  Per-process failures --
     non-zero exits, start errors, or a parser/remap raising -- are
     recorded on that process's :class:`ProcessResult` and never abort
     siblings; with ``cancel_on_failure=True`` the first failure cancels
@@ -460,7 +462,11 @@ async def _run_one(
                     continue
                 previous_detail = state.detail
                 _record_entry(state, mapped)
-                _emit_entry(mapped, dashboard_active=refresh is not None)
+                _emit_entry(
+                    state,
+                    mapped,
+                    dashboard_active=refresh is not None,
+                )
                 if refresh is not None:
                     refresh(force=state.detail != previous_detail)
     except anyio.get_cancelled_exc_class():
@@ -551,10 +557,13 @@ def _record_entry(state: _ProcessState, entry: LogEntry) -> None:
         state.detail = detail
     display_process = entry.get(remap.PROGRESS_PROCESS)
     display_subject = entry.get(remap.PROGRESS_SUBJECT)
+    display_separator = entry.get(remap.PROGRESS_SEPARATOR)
     if isinstance(display_process, str) and display_process:
         state.display_process = display_process
     if isinstance(display_subject, str) and display_subject:
         state.display_subject = display_subject
+    if isinstance(display_separator, str):
+        state.display_separator = display_separator
     total = entry.get(remap.PROGRESS_TOTAL)
     completed = entry.get(remap.PROGRESS_COMPLETED)
     if isinstance(total, int) and isinstance(completed, int):
@@ -572,10 +581,42 @@ def _record_entry(state: _ProcessState, entry: LogEntry) -> None:
         state.completed = completed
 
 
-def _emit_entry(entry: LogEntry, *, dashboard_active: bool) -> None:
+def _emit_entry(
+    state: _ProcessState,
+    entry: LogEntry,
+    *,
+    dashboard_active: bool,
+) -> None:
     if dashboard_active:
         return
+    if log.plain_output_enabled():
+        entry = _plain_status_entry(state, entry)
     emit_entry(entry, show_context=True)
+
+
+def _plain_status_entry(
+    state: _ProcessState,
+    entry: LogEntry,
+) -> LogEntry:
+    """Render one durable line from the same state used by fancy mode."""
+    detail = _progress_detail(state)
+    if state.total is not None and state.completed is not None:
+        percent = progress.progress_percent(
+            completed=state.completed,
+            total=state.total,
+        )
+        detail = f"{percent:>3d}% {detail}".rstrip()
+
+    subject = state.display_subject
+    if subject is not None and detail:
+        message = f"{subject}{state.display_separator}{detail}"
+    else:
+        message = subject or detail or str(entry.get("message", ""))
+
+    rendered = dict(entry)
+    rendered["name"] = state.display_process
+    rendered["message"] = message
+    return rendered
 
 
 def _record_failure(
@@ -593,7 +634,7 @@ def _record_failure(
         "lograil.process": state.spec.label,
     }
     _record_entry(state, entry)
-    _emit_entry(entry, dashboard_active=dashboard_active)
+    _emit_entry(state, entry, dashboard_active=dashboard_active)
 
 
 def _result_from_state(state: _ProcessState) -> ProcessResult:
@@ -715,8 +756,11 @@ def _done_marker(state: _ProcessState) -> Text:
 def _progress_body(
     state: _ProcessState, *, label_width: int, max_width: int
 ) -> Text:
+    label_value = state.display_subject or state.display_process
+    if state.display_subject is not None:
+        label_value += state.display_separator.rstrip()
     label = _fixed_text(
-        state.display_subject or state.display_process,
+        label_value,
         label_width,
     )
     if state.total is None:

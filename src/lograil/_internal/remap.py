@@ -19,6 +19,7 @@ PROGRESS_TOTAL = "lograil.progress.total"
 PROGRESS_LABEL = "lograil.progress.label"
 PROGRESS_PROCESS = "lograil.progress.process"
 PROGRESS_SUBJECT = "lograil.progress.subject"
+PROGRESS_SEPARATOR = "lograil.progress.separator"
 PROGRESS_CLEAR_LABEL = "lograil.progress.clear_label"
 STATUS_ONLY = "lograil.status_only"
 STAGE = "lograil.stage"
@@ -135,6 +136,7 @@ def extract_progress_metadata(entry: LogEntry) -> LogEntry:
         entry[PROGRESS_PROCESS] = update.process
     if update.subject is not None:
         entry[PROGRESS_SUBJECT] = update.subject
+    entry[PROGRESS_SEPARATOR] = update.separator
     if update.clear_label:
         entry[PROGRESS_CLEAR_LABEL] = True
     return entry
