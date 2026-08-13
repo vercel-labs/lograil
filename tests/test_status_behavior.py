@@ -75,10 +75,21 @@ def test_unset_is_status_default_sentinel() -> None:
     with lograil.status(
         process="building",
         subject="api",
+        animate=False,
+    ) as omitted_handle:
+        omitted_done = omitted_handle.done
+
+    with lograil.status(
+        process="building",
+        subject="api",
         done=lograil.UNSET,
         animate=False,
-    ) as handle:
-        assert handle.done == "building [bold blue]api[/bold blue]: done"
+    ) as explicit_handle:
+        explicit_done = explicit_handle.done
+
+    assert explicit_done == omitted_done
+    assert explicit_done is not None
+    assert Text.from_markup(explicit_done).plain == "building api: done"
 
 
 def test_update_status_subject_only_without_active_status_logs_plain(
