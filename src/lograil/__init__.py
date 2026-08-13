@@ -8,6 +8,7 @@ from lograil._internal.async_tail import AsyncLogSource, SubprocessLogSource
 from lograil._internal.formatter import LograilFormatter, format_log_entry
 from lograil._internal.lifecycle import ProgressHandle, progress, stage
 from lograil._internal.log import (
+    UNSET,
     EnvFilter,
     LograilHandler,
     StatusHandle,
@@ -20,6 +21,7 @@ from lograil._internal.log import (
     is_debug,
     pause_for_prompt,
     quiet,
+    set_status_animation,
     set_timestamps,
     severity_name,
     status,
@@ -56,6 +58,7 @@ from lograil.sources.fd import FileDescriptorLogSource
 
 __all__ = [
     "DEFAULT_REMAPS",
+    "UNSET",
     "AsyncLogSource",
     "EnvFilter",
     "FileDescriptorLogSource",
@@ -92,6 +95,7 @@ __all__ = [
     "quiet",
     "register_output_parser",
     "run_process_group",
+    "set_status_animation",
     "set_timestamps",
     "severity_name",
     "stage",

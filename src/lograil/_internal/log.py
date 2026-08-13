@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from rich.console import RenderableType
     from rich.status import Status
 
-_DONE_UNSET = object()
+UNSET = object()
+"""Sentinel for optional arguments whose omission is meaningful."""
 LOG_ENV = "LOGRAIL"
 OUTPUT_ENV = "LOGRAIL_OUTPUT"
 TRACEBACK_ENV = "LOGRAIL_LOG_ERROR_TRACEBACK"
@@ -525,7 +526,7 @@ def _derive_done(
     process: str | None,
     subject: str | None,
 ) -> str | None:
-    if done is not _DONE_UNSET:
+    if done is not UNSET:
         return done if isinstance(done, str) else None
     if process is not None and subject is not None:
         return f"{message}: done"
@@ -806,6 +807,13 @@ _active_status: ContextVar[StatusHandle | None] = ContextVar(
 _sticky_state: ContextVar[tuple[str | None, str | None, str | None]] = (
     ContextVar("_sticky_state", default=(None, None, None))
 )
+_status_animation: bool | None = None
+
+
+def set_status_animation(*, enabled: bool | None) -> None:
+    """Override status animation, or restore output-mode defaults with None."""
+    global _status_animation
+    _status_animation = enabled
 
 
 def get_active_status() -> StatusHandle | None:
@@ -869,7 +877,7 @@ def pause_for_prompt() -> Iterator[None]:
 def status(
     message: str | StatusLabel | None = None,
     *,
-    done: str | object | None = _DONE_UNSET,
+    done: str | object | None = UNSET,
     sticky: bool = False,
     process: str | None = None,
     subject: str | None = None,
@@ -890,7 +898,12 @@ def status(
     :class:`StatusHandle` for mid-flight updates and cancellation. Set
     ``animate=False`` to log status lines even when fancy output is enabled.
     """
-    use_spinner = fancy_output_enabled() if animate is None else animate
+    if animate is not None:
+        use_spinner = animate
+    elif _status_animation is not None:
+        use_spinner = _status_animation
+    else:
+        use_spinner = fancy_output_enabled()
     if use_spinner:
         # User-supplied text is untrusted: escape it here, at the entry
         # point, so everything downstream is trusted markup.

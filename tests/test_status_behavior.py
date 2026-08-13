@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -46,6 +47,38 @@ def test_status_can_disable_animation_in_fancy_mode(
     output = capsys.readouterr().err
     assert "working" in output
     assert "finished" in output
+
+
+def test_status_uses_runtime_animation_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    logger = lograil.configure_logging()
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger.handlers = [Capture()]
+    lograil.set_status_animation(enabled=False)
+    try:
+        with lograil.status("working", done=None):
+            pass
+    finally:
+        lograil.set_status_animation(enabled=None)
+
+    assert [record.getMessage() for record in records] == ["working"]
+
+
+def test_unset_is_status_default_sentinel() -> None:
+    with lograil.status(
+        process="building",
+        subject="api",
+        done=lograil.UNSET,
+        animate=False,
+    ) as handle:
+        assert handle.done == "building [bold blue]api[/bold blue]: done"
 
 
 def test_update_status_subject_only_without_active_status_logs_plain(
