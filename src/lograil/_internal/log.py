@@ -19,6 +19,7 @@ from rich.markup import escape
 from rich.text import Text
 
 from lograil._internal.console import stderr_console
+from lograil._internal.env import detect_agent
 from lograil._internal.formatter import LograilFormatter, OutputMode
 
 if TYPE_CHECKING:
@@ -202,7 +203,10 @@ def _get_error_traceback_mode() -> str:
 
 
 def _default_output_mode() -> OutputMode:
-    return "fancy" if sys.stderr.isatty() else "plain"
+    is_tty = sys.stderr.isatty()
+    if detect_agent(is_tty=is_tty) is not None:
+        return "plain"
+    return "fancy" if is_tty else "plain"
 
 
 def _get_output_mode() -> OutputMode:
