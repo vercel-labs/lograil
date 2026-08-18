@@ -320,8 +320,9 @@ entry iterator is reported once on `TailDrained.error`, never silently retried.
 
 ## Output modes and filtering
 
-Output mode is auto-detected -- `fancy` on a TTY, `plain` otherwise -- and can
-be forced with `LOGRAIL_OUTPUT=fancy|plain|json`:
+Output mode is auto-detected -- `fancy` on a human-driven TTY, `plain` when
+running under a supported coding agent or without a TTY -- and can be forced
+with `LOGRAIL_OUTPUT=fancy|plain|json`:
 
 - **fancy** -- transient spinners, progress bars, live dashboards; warnings
   and errors always print permanently, even while a progress bar is active.

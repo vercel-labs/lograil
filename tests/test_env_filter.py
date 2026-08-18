@@ -130,6 +130,7 @@ def test_configure_logging_reads_output_mode(
     monkeypatch: pytest.MonkeyPatch, value: str, expected: str
 ) -> None:
     monkeypatch.setenv("LOGRAIL_OUTPUT", value)
+    monkeypatch.setattr(log, "detect_agent", lambda **_kwargs: "codex")
 
     lograil.configure_logging()
 
@@ -146,11 +147,42 @@ def test_configure_logging_defaults_output_from_interactive_stderr(
 ) -> None:
     monkeypatch.delenv("LOGRAIL_OUTPUT", raising=False)
     monkeypatch.setattr("sys.stderr.isatty", lambda: True)
+    monkeypatch.setattr(log, "detect_agent", lambda **_kwargs: None)
 
     lograil.configure_logging()
 
     try:
         assert log.output_mode() == "fancy"
+    finally:
+        lograil.configure_logging(default="info")
+
+
+def test_configure_logging_defaults_to_plain_for_agent_on_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOGRAIL_OUTPUT", raising=False)
+    monkeypatch.setattr("sys.stderr.isatty", lambda: True)
+    monkeypatch.setattr(log, "detect_agent", lambda **_kwargs: "codex")
+
+    lograil.configure_logging()
+
+    try:
+        assert log.output_mode() == "plain"
+    finally:
+        lograil.configure_logging(default="info")
+
+
+def test_configure_logging_defaults_to_plain_without_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOGRAIL_OUTPUT", raising=False)
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+    monkeypatch.setattr(log, "detect_agent", lambda **_kwargs: None)
+
+    lograil.configure_logging()
+
+    try:
+        assert log.output_mode() == "plain"
     finally:
         lograil.configure_logging(default="info")
 
