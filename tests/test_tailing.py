@@ -85,12 +85,15 @@ def test_tail_to_status_uses_generic_source(
 
 def test_tail_to_status_lingers_before_stopping_source() -> None:
     configure_logging()
-    started = time.monotonic()
+    # perf_counter, not monotonic: Windows' monotonic clock advances in
+    # ~15.6ms ticks, and timed waits there can return up to a tick early,
+    # so keep a wide margin below the linger.
+    started = time.perf_counter()
 
-    with tail_to_status(source=FakeSource([]), delay=0, linger=0.02):
+    with tail_to_status(source=FakeSource([]), delay=0, linger=0.1):
         pass
 
-    assert time.monotonic() - started >= 0.015
+    assert time.perf_counter() - started >= 0.05
 
 
 def test_tail_to_status_routes_progress_lines_to_active_status(
