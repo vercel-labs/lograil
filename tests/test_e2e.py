@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 import pytest
 import time_machine
+from rich.text import Text
 
 from lograil import (
     configure_logging,
@@ -53,7 +54,12 @@ class _FastStop(threading.Event):
 
 
 def _printed_messages(mock_print: Any) -> list[str]:
-    return [str(call.args[0]) for call in mock_print.call_args_list]
+    return [
+        call.args[0].plain
+        if isinstance(call.args[0], Text)
+        else str(call.args[0])
+        for call in mock_print.call_args_list
+    ]
 
 
 # ---------------------------------------------------------------------------

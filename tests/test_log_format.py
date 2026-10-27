@@ -259,6 +259,21 @@ def test_format_log_entry_escapes_context_name_markup() -> None:
     assert "scan[/tmp] ok" in rendered.plain
 
 
+@pytest.mark.parametrize("field", ["timestamp", "asctime"])
+@pytest.mark.parametrize("levelname", ["INFO", "ERROR"])
+def test_format_log_entry_escapes_timestamp_markup(
+    field: str, levelname: str
+) -> None:
+    result = lograil.format_log_entry({
+        field: "[/bad] [bold]x",
+        "levelname": levelname,
+        "message": "ok",
+    })
+
+    rendered = render(result)
+    assert "[/bad] [bold]x ok" in rendered.plain
+
+
 def test_format_spinner_entry_escapes_context_name_markup() -> None:
     result = format_spinner_entry(
         {"name": "a[bold]b", "levelname": "INFO"},

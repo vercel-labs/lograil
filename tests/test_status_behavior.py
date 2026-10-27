@@ -8,6 +8,7 @@ import logging
 from unittest.mock import patch
 
 import pytest
+from rich.control import Control
 from rich.text import Text
 
 import lograil
@@ -144,6 +145,36 @@ def test_fancy_status_process_subject_renders_styling(
     assert spinner_text.plain == "docker building"
     assert "[bold blue]" not in spinner_text.plain
     assert any("bold blue" in str(span.style) for span in spinner_text.spans)
+
+
+def test_pinned_status_stays_live_and_next_update_resumes_spinner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    lograil.configure_logging(default="debug")
+
+    with (
+        patch("lograil._internal.console.stderr_console.print") as printed,
+        lograil.status("booting", done=None) as handle,
+    ):
+        assert handle._status is not None
+        handle.pin("FreeRDP connected")
+        pinned = handle._status._live._renderable
+        assert isinstance(pinned, Text)
+        assert pinned.plain == "+ FreeRDP connected"
+        assert handle._handlers_restored is True
+
+        handle.update("shutting down")
+        assert handle._status.status.plain == "shutting down"
+        assert handle._handlers_restored is False
+
+    # Live redraws print bare Control segments on terminal consoles
+    # (e.g. under FORCE_COLOR); only real lines would be permanent output.
+    assert not [
+        call
+        for call in printed.call_args_list
+        if not (len(call.args) == 1 and isinstance(call.args[0], Control))
+    ]
 
 
 def test_nested_fancy_status_restores_parent_label(

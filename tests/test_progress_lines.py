@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from rich.console import Console
 
 from lograil import (
     TerminalProgressState,
@@ -50,6 +51,24 @@ def test_progress_separator_round_trips() -> None:
     assert parsed.separator == ": "
 
 
+def test_nested_progress_round_trips_as_complete_snapshot() -> None:
+    line = format_progress_line(
+        description="Installing Windows",
+        completed=32,
+        total=100,
+        child_description="Applying Windows image",
+        child_completed=50,
+        child_total=100,
+    )
+
+    parsed = progress.parse(line)
+
+    assert parsed is not None
+    assert parsed.child_description == "Applying Windows image"
+    assert parsed.child_completed == 50
+    assert parsed.child_total == 100
+
+
 def test_parse_rejects_bad_payload() -> None:
     assert progress.parse("::lograil-progress::[]") is None
     assert progress.parse("not progress") is None
@@ -75,11 +94,23 @@ def test_from_mapping_accepts_missing_total() -> None:
     assert update.total is None
 
 
+def test_from_mapping_accepts_decimal_strings_from_log_stores() -> None:
+    update = progress.ProgressUpdate.from_mapping({
+        "description": "installing",
+        "completed": "49",
+        "total": "100",
+    })
+
+    assert update is not None
+    assert update.completed == 49
+    assert update.total == 100
+
+
 def test_from_mapping_still_validates_types() -> None:
     assert (
         progress.ProgressUpdate.from_mapping({
             "description": "collecting",
-            "completed": "5",
+            "completed": "5.0",
         })
         is None
     )
@@ -87,7 +118,7 @@ def test_from_mapping_still_validates_types() -> None:
         progress.ProgressUpdate.from_mapping({
             "description": "collecting",
             "completed": 5,
-            "total": "10",
+            "total": "10.0",
         })
         is None
     )
@@ -295,6 +326,120 @@ def test_renderer_indeterminate_to_determinate_transition(
         task = renderer._progress.tasks[renderer._task_id]
         assert task.total == 10
         assert task.completed == 1
+    finally:
+        renderer.finish()
+
+
+def test_renderer_replaces_and_removes_nested_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(log, "plain_output_enabled", lambda: False)
+    monkeypatch.setattr(log, "get_active_status", lambda: None)
+    monkeypatch.setattr(log, "get_sticky_prefix", lambda: None)
+    monkeypatch.setattr(log, "get_sticky_subject", lambda: None)
+
+    renderer = progress.StatusProgressRenderer()
+    try:
+        renderer.update(
+            progress.ProgressUpdate(
+                "Installing Windows",
+                32,
+                100,
+                child_description="Downloading Windows updates",
+                child_completed=75,
+                child_total=100,
+            )
+        )
+        assert renderer._progress is not None
+        assert renderer._child_task_id is not None
+        child = renderer._progress.tasks[renderer._child_task_id]
+        assert child.fields["label"] == "Downloading Windows updates"
+        assert child.completed == 75
+
+        renderer.update(
+            progress.ProgressUpdate(
+                "Installing Windows",
+                34,
+                100,
+                child_description="Downloading Windows updates",
+                child_completed=100,
+                child_total=100,
+            )
+        )
+        assert renderer._child_task_id is None
+        assert len(renderer._progress.tasks) == 1
+
+        renderer.update(
+            progress.ProgressUpdate(
+                "Installing Windows",
+                34,
+                100,
+                child_description="Applying Windows image",
+                child_completed=100,
+                child_total=100,
+            )
+        )
+        assert renderer._child_task_id is None
+        assert len(renderer._progress.tasks) == 1
+
+        renderer.update(progress.ProgressUpdate("Provisioning", 55, 100))
+        assert renderer._child_task_id is None
+        assert len(renderer._progress.tasks) == 1
+    finally:
+        renderer.finish()
+
+
+def test_renderer_keeps_bar_fixed_and_abbreviates_long_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(log, "plain_output_enabled", lambda: False)
+    monkeypatch.setattr(log, "get_sticky_prefix", lambda: None)
+    monkeypatch.setattr(log, "get_sticky_subject", lambda: None)
+    capture = Console(
+        record=True,
+        width=100,
+        file=io.StringIO(),
+        force_terminal=False,
+        color_system=None,
+        legacy_windows=False,
+    )
+    monkeypatch.setattr(console, "stderr_console", capture)
+
+    class Handle:
+        def use_progress(self, value: object) -> None:
+            _ = value
+
+        def resume_status(self) -> None:
+            pass
+
+    renderer = progress.StatusProgressRenderer(Handle())  # type: ignore[arg-type]
+    try:
+        positions: list[tuple[int, int]] = []
+        lines: list[str] = []
+        for detail in (
+            "booting",
+            "EDK2-VGIC CORE ExitBootServices return " * 4,
+        ):
+            renderer.update(
+                progress.ProgressUpdate(
+                    detail,
+                    53,
+                    100,
+                    label="image win11-base: installing Windows",
+                    child_description="Applying Windows image",
+                    child_completed=50,
+                    child_total=100,
+                )
+            )
+            assert renderer._progress is not None
+            capture.print(renderer._progress.get_renderable())
+            parent = capture.export_text(clear=True).splitlines()[0]
+            lines.append(parent)
+            positions.append((parent.index("━"), parent.index("53%")))
+
+        assert positions[0] == positions[1]
+        assert len(lines[1]) == 100
+        assert lines[1].endswith("…")
     finally:
         renderer.finish()
 
