@@ -491,16 +491,19 @@ def _escape_wrapped_message(
     for index, physical_line in enumerate(message.split("\n")):
         prefix_len = first_prefix_len if index == 0 else 0
         if cell_len(physical_line) <= width - prefix_len:
-            rendered.append(_escape_markup(physical_line))
+            rendered.append(physical_line)
             continue
         pieces = _wrap_line_cells(
             physical_line,
             first_width=width - prefix_len,
             rest_width=width - subsequent_prefix_len,
         )
-        rendered.append(_escape_markup(pieces[0]))
-        rendered.extend(indent + _escape_markup(piece) for piece in pieces[1:])
-    return "\n".join(rendered)
+        rendered.append(pieces[0])
+        rendered.extend(indent + piece for piece in pieces[1:])
+    # Escape after joining. A markup-shaped token can be split by wrapping;
+    # escaping individual fragments would miss a tag whose opening bracket
+    # and closing bracket land on different lines.
+    return _escape_markup("\n".join(rendered))
 
 
 def _wrap_line_cells(

@@ -201,6 +201,22 @@ def test_wrap_escapes_markup_in_wrapped_lines(
     assert not rendered.spans
 
 
+def test_wrap_preserves_setup_command_that_looks_like_closing_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(console.stdout_console, "width", 40)
+    message = "SetupHost [/RollbackUser /Boot /ClientId Boot360]"
+
+    result = lograil.format_log_entry({
+        "name": "vm",
+        "message": message,
+        "levelname": "INFO",
+    })
+
+    rendered = render(result)
+    assert message in " ".join(rendered.plain.split())
+
+
 def test_format_log_entry_width_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
