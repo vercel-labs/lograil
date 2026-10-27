@@ -21,6 +21,9 @@ PROGRESS_PROCESS = "lograil.progress.process"
 PROGRESS_SUBJECT = "lograil.progress.subject"
 PROGRESS_SEPARATOR = "lograil.progress.separator"
 PROGRESS_CLEAR_LABEL = "lograil.progress.clear_label"
+PROGRESS_CHILD_DESCRIPTION = "lograil.progress.child.description"
+PROGRESS_CHILD_COMPLETED = "lograil.progress.child.completed"
+PROGRESS_CHILD_TOTAL = "lograil.progress.child.total"
 STATUS_ONLY = "lograil.status_only"
 STAGE = "lograil.stage"
 """Producer-defined phase of a multi-stage run (e.g. collect, run)."""
@@ -139,6 +142,11 @@ def extract_progress_metadata(entry: LogEntry) -> LogEntry:
     entry[PROGRESS_SEPARATOR] = update.separator
     if update.clear_label:
         entry[PROGRESS_CLEAR_LABEL] = True
+    if update.child_description is not None:
+        entry[PROGRESS_CHILD_DESCRIPTION] = update.child_description
+        entry[PROGRESS_CHILD_COMPLETED] = update.child_completed
+        if update.child_total is not None:
+            entry[PROGRESS_CHILD_TOTAL] = update.child_total
     return entry
 
 

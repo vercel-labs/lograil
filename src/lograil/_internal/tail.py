@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rich.markup import escape as _escape_markup
+from rich.text import Text
 
 from lograil._internal import console, log, progress, remap
 from lograil._internal.formatter import (
@@ -98,6 +99,9 @@ def _progress_update_from_entry(
         "subject": entry.get(remap.PROGRESS_SUBJECT),
         "separator": entry.get(remap.PROGRESS_SEPARATOR, " "),
         "clear_label": entry.get(remap.PROGRESS_CLEAR_LABEL, False),
+        "child_description": entry.get(remap.PROGRESS_CHILD_DESCRIPTION),
+        "child_completed": entry.get(remap.PROGRESS_CHILD_COMPLETED),
+        "child_total": entry.get(remap.PROGRESS_CHILD_TOTAL),
     })
 
 
@@ -125,6 +129,7 @@ def _render_tail_entry(
     levelno = log.level_number(str(entry.get("levelname", "INFO")))
     if (
         progress_update is not None
+        and not context.persistent
         and log.fancy_output_enabled()
         # Progress display is UI state, not log output: the bar renders
         # even when the env filter suppresses the entry's own text (only
@@ -132,11 +137,19 @@ def _render_tail_entry(
         and log.entry_display_enabled(log.tail_logger().name)
     ):
         context.progress_renderer.update(progress_update)
-        if levelno < logging.WARNING or not has_message:
+        if (
+            levelno < logging.WARNING
+            or not has_message
+            or entry.get(remap.STATUS_ONLY) is True
+        ):
             return last_update
     if not log.entry_enabled(log.tail_logger().name, levelno):
         return last_update
-    if entry.get(remap.STATUS_ONLY) is True and log.fancy_output_enabled():
+    if (
+        entry.get(remap.STATUS_ONLY) is True
+        and not context.persistent
+        and log.fancy_output_enabled()
+    ):
         if context.progress_renderer.active:
             return last_update
         if context.active_status is not None:
@@ -165,6 +178,19 @@ def _print_tail_entry(entry: LogEntry, *, show_context: bool) -> None:
                 context="name" if show_context else None,
                 target_console=console.stderr_console,
             ),
+            soft_wrap=True,
+        )
+        return
+    if not _message_has_ansi(entry):
+        rendered = Text.from_markup(
+            format_log_entry(
+                entry,
+                context="name" if show_context else None,
+                target_console=console.stderr_console,
+            )
+        )
+        console.stderr_console.print(
+            rendered,
             soft_wrap=True,
         )
         return
@@ -204,6 +230,24 @@ def emit_entry(
     return True
 
 
+def _shorten_context(entry: LogEntry, hide_context: str | None) -> LogEntry:
+    """Hide one context or render slash-delimited descendants relatively."""
+    if not hide_context:
+        return entry
+    name = entry.get("name")
+    if not isinstance(name, str):
+        return entry
+    hidden = hide_context.rstrip("/")
+    if not hidden:
+        return entry
+    if name == hidden:
+        return {**entry, "name": ""}
+    prefix = f"{hidden}/"
+    if name.startswith(prefix):
+        return {**entry, "name": name.removeprefix(prefix)}
+    return entry
+
+
 def _emit_tail_entry(
     entry: LogEntry,
     msg_str: str,
@@ -213,17 +257,27 @@ def _emit_tail_entry(
     last_update: float,
     now: float,
 ) -> bool:
-    entry_show_context = (
-        context.show_context and entry.get("name") != context.hide_context
-    )
     if context.persistent or log.plain_output_enabled():
-        return emit_entry(entry, show_context=entry_show_context)
+        if not entry.get("message") and msg_str:
+            entry = {**entry, "message": msg_str}
+        if log.output_mode() == "json":
+            return emit_entry(entry, show_context=context.show_context)
+        display_entry = _shorten_context(entry, context.hide_context)
+        return emit_entry(
+            display_entry,
+            show_context=context.show_context
+            and bool(display_entry.get("name")),
+        )
     if log.output_mode() == "json":
-        return emit_entry(entry, show_context=entry_show_context)
+        return emit_entry(entry, show_context=context.show_context)
+    display_entry = _shorten_context(entry, context.hide_context)
+    entry_show_context = context.show_context and bool(
+        display_entry.get("name")
+    )
     # Fancy mode: warnings and errors always print permanently (above any
     # active spinner or progress bar), never as droppable transient text.
     if levelno >= logging.WARNING:
-        _print_tail_entry(entry, show_context=entry_show_context)
+        _print_tail_entry(display_entry, show_context=entry_show_context)
         return True
     if context.progress_renderer.active:
         # A progress bar owns the display; transient spinner lines are
@@ -234,7 +288,7 @@ def _emit_tail_entry(
     if context.lossy and now - last_update < _LOSSY_UPDATE_INTERVAL:
         return False
     rendered = format_spinner_entry(
-        entry,
+        display_entry,
         msg_str,
         show_context=entry_show_context,
     )
@@ -275,8 +329,9 @@ def tail_to_status(
     NDJSON records in json mode.  Warnings and errors always print
     permanently, and the configured env filter applies in every mode.
     ``linger`` keeps the source open briefly after the wrapped operation,
-    allowing late-arriving entries to render. ``remaps`` overrides the
-    default entry pipeline, and ``filters`` is
+    allowing late-arriving entries to render. ``hide_context`` omits an
+    exact context and renders slash-delimited descendants relative to it.
+    ``remaps`` overrides the default entry pipeline, and ``filters`` is
     passed through to the source's ``open()``.  ``delay`` postpones
     opening the source (letting an enclosing status settle first); the
     source is opened and consumed even when the ``with`` block finishes

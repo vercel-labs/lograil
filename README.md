@@ -70,6 +70,12 @@ with status(process="build", subject="api-server") as handle:
     handle.update("linking")  # spinner: "linking"
 # prints "+ build api-server: done"
 
+# Keep a completed phase in the live display without printing it; the next
+# update replaces it and resumes the spinner.
+with status("connecting", done=None) as handle:
+    handle.pin("connected")  # stable live row: "+ connected"
+    handle.update("shutting down")  # spinner resumes in place
+
 # Statuses nest; inner completion lines print above the outer spinner.
 with status("deploying", sticky=True):
     with status(process="build", subject="api"):
@@ -109,11 +115,18 @@ from lograil.sources.file import FileLogSource
 
 source = FileLogSource(["logs/*.log"], read_from="end", tail_lines=20)
 with status("Watching deploy", done="deploy finished"):
-    with tail_to_status(source=source) as drained:
+    with tail_to_status(
+        source=source,
+        show_context=True,
+        hide_context="deploy/api",
+    ) as drained:
         wait_for_deploy()  # log lines animate the spinner meanwhile
     if drained.error is not None:
         raise RuntimeError(f"log stream failed: {drained.error}")
 ```
+
+`hide_context` omits that exact context and shows slash-delimited descendants
+relative to it, so `deploy/api/worker` renders as `worker`.
 
 Entries are plain dicts. `message` and `levelname` are the core keys;
 everything else is structured context that survives into JSON output:
@@ -259,6 +272,12 @@ Any source can carry progress the same way: entries annotated with the
 
 Omit `total` (or set it to `null`) for indeterminate progress: no bar or
 percentage is rendered, only the description text next to the spinner.
+
+An update can also carry one current nested operation with
+`lograil.progress.child.description`, `.completed`, and optional `.total`.
+The fields form a complete snapshot: omit the child fields to remove the
+nested row. This keeps an overall bar visible while a determinate or
+indeterminate sub-operation changes beneath it.
 
 ## NDJSON entries from tools that speak lograil natively
 

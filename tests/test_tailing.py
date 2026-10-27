@@ -83,6 +83,50 @@ def test_tail_to_status_uses_generic_source(
     assert any("Ready" in message for message in messages)
 
 
+def test_tail_to_status_shortens_hidden_context_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    configure_logging()
+    source = FakeSource([
+        {"name": "instance/default", "message": "root"},
+        {
+            "name": "instance/default/firmware",
+            "message": "ExitBootServices",
+        },
+        {
+            "name": "instance/default2/firmware",
+            "message": "other instance",
+        },
+    ])
+    handle = Handle()
+
+    with (
+        patch("lograil._internal.log.get_active_status", return_value=handle),
+        tail_to_status(
+            source=source,
+            delay=0,
+            lossy=False,
+            show_context=True,
+            hide_context="instance/default",
+        ) as drained,
+    ):
+        drained.wait(1)
+
+    messages = [str(message) for message in handle.messages]
+    root = next(message for message in messages if "root" in message)
+    firmware = next(
+        message for message in messages if "ExitBootServices" in message
+    )
+    sibling = next(
+        message for message in messages if "other instance" in message
+    )
+    assert "instance/default" not in root
+    assert "firmware" in firmware
+    assert "instance/default/" not in firmware
+    assert "instance/default2/firmware" in sibling
+
+
 def test_tail_to_status_lingers_before_stopping_source() -> None:
     configure_logging()
     # perf_counter, not monotonic: Windows' monotonic clock advances in
@@ -123,6 +167,41 @@ def test_tail_to_status_routes_progress_lines_to_active_status(
         "Uploading artifacts" in str(message) for message in handle.messages
     )
     assert mock_log.call_count == 0
+
+
+def test_tail_maps_nested_progress_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    configure_logging()
+    source = FakeSource([
+        {
+            "message": "raw setup detail",
+            "lograil.progress.description": "raw setup detail",
+            "lograil.progress.completed": "32",
+            "lograil.progress.total": "100",
+            "lograil.progress.child.description": (
+                "Downloading Windows updates"
+            ),
+            "lograil.progress.child.completed": "75",
+            "lograil.progress.child.total": "100",
+        }
+    ])
+    updates: list[object] = []
+
+    with (
+        patch(
+            "lograil._internal.progress.StatusProgressRenderer.update",
+            side_effect=updates.append,
+        ),
+        tail_to_status(source=source, delay=0, lossy=False) as drained,
+    ):
+        drained.wait(1)
+
+    update = updates[0]
+    assert update.child_description == "Downloading Windows updates"
+    assert update.child_completed == 75
+    assert update.child_total == 100
 
 
 def test_tail_to_status_applies_remaps_before_rendering(
@@ -237,6 +316,38 @@ def test_tail_to_status_prints_error_with_progress_metadata(
     assert any("Uploading layer" in str(message) for message in handle.messages)
     printed = [str(call.args[0]) for call in mock_print.call_args_list]
     assert any("failed to upload layer" in message for message in printed)
+    assert mock_log.call_count == 0
+
+
+def test_status_only_warning_updates_progress_without_permanent_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    configure_logging()
+    source = FakeSource([
+        {
+            "levelname": "WARN",
+            "message": "driftfix 'slew' is not available with this machine",
+            "lograil.progress.description": (
+                "driftfix 'slew' is not available with this machine"
+            ),
+            "lograil.progress.completed": 20,
+            "lograil.progress.total": 100,
+            "lograil.status_only": True,
+        }
+    ])
+    handle = Handle()
+
+    with (
+        patch("lograil._internal.log.get_active_status", return_value=handle),
+        patch("lograil._internal.console.stderr_console.print") as mock_print,
+        _patch_tail_log() as mock_log,
+        tail_to_status(source=source, delay=0, lossy=False) as drained,
+    ):
+        drained.wait(1)
+
+    assert any("driftfix 'slew'" in str(message) for message in handle.messages)
+    assert mock_print.call_count == 0
     assert mock_log.call_count == 0
 
 
@@ -372,6 +483,75 @@ def test_tail_to_status_prints_progress_entries_in_json_mode(
     ]
     assert "FROM alpine" in rendered
     assert "loading build context" in rendered
+
+
+def test_persistent_fancy_tail_prints_progress_without_status_ui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    configure_logging()
+    source = FakeSource([
+        {
+            "timestamp": "2026-08-26T12:34:56Z",
+            "name": "build/windows/installer",
+            "levelname": "INFO",
+            "message": "SetupHost [/RollbackUser /Boot /ClientId Boot360]",
+            "lograil.progress.description": "Installing Windows",
+            "lograil.progress.completed": "49",
+            "lograil.progress.total": "100",
+        }
+    ])
+    handle = Handle()
+
+    with (
+        patch("lograil._internal.log.get_active_status", return_value=handle),
+        patch("lograil._internal.console.stderr_console.print") as mock_print,
+        _patch_tail_log() as mock_log,
+        tail_to_status(
+            source=source,
+            delay=0,
+            lossy=False,
+            persistent=True,
+            show_context=True,
+        ) as drained,
+    ):
+        drained.wait(1)
+
+    assert handle.messages == []
+    assert mock_log.call_count == 0
+    assert mock_print.call_count == 1
+    rendered = mock_print.call_args.args[0]
+    plain = rendered.plain
+    assert " ".join(plain.split()).endswith(
+        "SetupHost [/RollbackUser /Boot /ClientId Boot360]"
+    )
+    assert "build/windows/installer" in plain
+
+
+def test_persistent_tail_prints_progress_only_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    configure_logging()
+    source = FakeSource([
+        {
+            "lograil.progress.description": "Installing Windows",
+            "lograil.progress.completed": 49,
+            "lograil.progress.total": 100,
+        }
+    ])
+
+    with (
+        patch("lograil._internal.console.stderr_console.print") as mock_print,
+        tail_to_status(
+            source=source,
+            delay=0,
+            persistent=True,
+        ) as drained,
+    ):
+        drained.wait(1)
+
+    assert "Installing Windows" in str(mock_print.call_args.args[0])
 
 
 class SlowSource(LogSource):
@@ -595,6 +775,29 @@ def test_print_tail_entry_uses_stderr_console_width(
 
     rendered = str(mock_print.call_args.args[0])
     assert "\n" not in rendered
+
+
+@pytest.mark.parametrize("mode", ["fancy", "plain"])
+def test_malformed_timestamp_does_not_stop_tail(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", mode)
+    configure_logging()
+    source = FakeSource([
+        {"timestamp": "[/bad]", "levelname": "ERROR", "message": "first"},
+        {"levelname": "ERROR", "message": "second"},
+    ])
+
+    with (
+        patch("lograil._internal.console.stderr_console.print") as mock_print,
+        tail_to_status(source=source, delay=0, lossy=False) as drained,
+    ):
+        assert drained.wait(1)
+
+    assert drained.error is None
+    printed = [str(call.args[0]) for call in mock_print.call_args_list]
+    assert any("first" in line for line in printed)
+    assert any("second" in line for line in printed)
 
 
 def test_progress_detail_with_brackets_does_not_fail_tail(

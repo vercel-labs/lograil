@@ -25,6 +25,7 @@ from rich.progress import (
     TaskID,
     TextColumn,
 )
+from rich.table import Column
 from rich.text import Text
 
 from lograil._internal import console, log
@@ -157,23 +158,34 @@ class ProgressUpdate:
     subject: str | None = None
     separator: str = " "
     clear_label: bool = False
+    child_description: str | None = None
+    child_completed: int = 0
+    child_total: int | None = None
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any]) -> ProgressUpdate | None:
+    def from_mapping(  # noqa: PLR0911, PLR0912
+        cls, data: Mapping[str, Any]
+    ) -> ProgressUpdate | None:
         """Validate generic progress metadata from a mapping."""
         description = data.get("description")
-        completed = data.get("completed")
-        total = data.get("total")
+        completed = _coerce_integer(data.get("completed"))
+        raw_total = data.get("total")
+        total = _coerce_integer(raw_total)
         label = data.get("label")
         process = data.get("process")
         subject = data.get("subject")
         separator = data.get("separator", " ")
         clear_label = data.get("clear_label", False)
+        child_description = data.get("child_description")
+        raw_child_completed = data.get("child_completed")
+        child_completed = _coerce_integer(raw_child_completed)
+        raw_child_total = data.get("child_total")
+        child_total = _coerce_integer(raw_child_total)
         if not isinstance(description, str):
             return None
-        if not isinstance(completed, int):
+        if completed is None:
             return None
-        if total is not None and not isinstance(total, int):
+        if raw_total is not None and total is None:
             return None
         if label is not None and not isinstance(label, str):
             return None
@@ -185,6 +197,18 @@ class ProgressUpdate:
             return None
         if not isinstance(clear_label, bool):
             return None
+        if child_description is not None and not isinstance(
+            child_description, str
+        ):
+            return None
+        if child_description is None:
+            if raw_child_completed is not None or raw_child_total is not None:
+                return None
+            child_completed = 0
+        elif child_completed is None:
+            return None
+        if raw_child_total is not None and child_total is None:
+            return None
         return cls(
             description=description,
             completed=completed,
@@ -194,7 +218,26 @@ class ProgressUpdate:
             subject=subject,
             separator=separator,
             clear_label=clear_label,
+            child_description=child_description,
+            child_completed=child_completed,
+            child_total=child_total,
         )
+
+
+def _coerce_integer(value: object) -> int | None:
+    """Accept native integers and canonical decimal strings from log stores."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+        if value == str(parsed):
+            return parsed
+    return None
 
 
 def lograil_instrumentation_env() -> Mapping[str, str]:
@@ -207,7 +250,7 @@ def should_emit_progress_lines() -> bool:
     return os.environ.get(_PROGRESS_LINES_ENV) == "1"
 
 
-def format_line(
+def format_line(  # noqa: PLR0913
     *,
     description: str,
     completed: int,
@@ -217,6 +260,9 @@ def format_line(
     subject: str | None = None,
     separator: str = " ",
     clear_label: bool = False,
+    child_description: str | None = None,
+    child_completed: int = 0,
+    child_total: int | None = None,
     prefix: str = _PROGRESS_LINE_PREFIX,
 ) -> str:
     """Return one structured progress update line."""
@@ -236,6 +282,11 @@ def format_line(
         payload["separator"] = separator
     if clear_label:
         payload["clear_label"] = True
+    if child_description is not None:
+        payload["child_description"] = child_description
+        payload["child_completed"] = child_completed
+        if child_total is not None:
+            payload["child_total"] = child_total
     return prefix + json.dumps(payload, sort_keys=True)
 
 
@@ -244,7 +295,7 @@ def emit_line(line: str) -> None:
     print(line, flush=True)  # ruff:ignore[print] - subprocess IPC via stdout.
 
 
-def emit(
+def emit(  # noqa: PLR0913
     *,
     description: str,
     completed: int,
@@ -254,6 +305,9 @@ def emit(
     subject: str | None = None,
     separator: str = " ",
     clear_label: bool = False,
+    child_description: str | None = None,
+    child_completed: int = 0,
+    child_total: int | None = None,
     prefix: str = _PROGRESS_LINE_PREFIX,
 ) -> None:
     """Write one structured progress update to stdout."""
@@ -267,6 +321,9 @@ def emit(
             subject=subject,
             separator=separator,
             clear_label=clear_label,
+            child_description=child_description,
+            child_completed=child_completed,
+            child_total=child_total,
             prefix=prefix,
         )
     )
@@ -296,11 +353,29 @@ class _PaddedPercentColumn(ProgressColumn):
 
     def render(self, task: Any) -> Text:
         if task.total is None:
-            return Text(" ??%", style="progress.percentage")
+            return Text(" " * _PROGRESS_PERCENT_WIDTH)
         percentage = math.floor(task.percentage)
         if task.total and task.completed >= task.total:
             percentage = 100
         return Text(f"{percentage:>3.0f}%", style="progress.percentage")
+
+
+class _OptionalBarColumn(BarColumn):
+    """Keep rows aligned while omitting indeterminate bars."""
+
+    def render(self, task: Any) -> Any:
+        if task.total is None:
+            return Text(" " * _PROGRESS_BAR_WIDTH)
+        return super().render(task)
+
+
+class _HierarchySpinnerColumn(SpinnerColumn):
+    """Render a branch marker instead of a second spinner for child work."""
+
+    def render(self, task: Any) -> Any:
+        if task.fields.get("is_child"):
+            return Text(" └─", style="dim")
+        return super().render(task)
 
 
 def _progress_description_width(description: str) -> int:
@@ -423,6 +498,7 @@ class StatusProgressRenderer:
     def __init__(self, active_status: log.StatusHandle | None = None) -> None:
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
+        self._child_task_id: TaskID | None = None
         self._active_status = active_status
         self._owns_live = False
         self._active = False
@@ -449,7 +525,11 @@ class StatusProgressRenderer:
                 return
             description, subject = self._description(update)
             detail = self._detail(update.description)
-            if self._active_status is not None:
+            if (
+                self._active_status is not None
+                and update.child_description is None
+                and self._progress is None
+            ):
                 self._active_status.update(
                     _format_status_progress(
                         prefix=description,
@@ -465,25 +545,30 @@ class StatusProgressRenderer:
                 self._active = True
                 return
             if self._progress is None:
-                # TextColumn text is a str.format template: literal braces
-                # in the description must be doubled or they raise/expand.
-                column_text = description.replace("{", "{{").replace("}", "}}")
                 self._progress = Progress(
-                    SpinnerColumn(),
-                    TextColumn(column_text),
-                    BarColumn(bar_width=_PROGRESS_BAR_WIDTH),
+                    _HierarchySpinnerColumn(),
+                    TextColumn("{task.fields[label]}"),
+                    _OptionalBarColumn(bar_width=_PROGRESS_BAR_WIDTH),
                     _PaddedPercentColumn(),
                     TextColumn(
                         "{task.description}",
                         style="dim",
                         markup=False,
+                        table_column=Column(
+                            ratio=1,
+                            no_wrap=True,
+                            overflow="ellipsis",
+                        ),
                     ),
                     transient=True,
                     console=console.stderr_console,
+                    expand=True,
                 )
                 self._task_id = self._progress.add_task(
                     self._truncate_detail(description, detail),
                     total=update.total,
+                    label=description,
+                    is_child=False,
                 )
                 self._active_status = (
                     self._active_status or log.get_active_status()
@@ -499,7 +584,32 @@ class StatusProgressRenderer:
                     description=self._truncate_detail(description, detail),
                     completed=update.completed,
                     total=update.total,
+                    label=description,
                 )
+            child_complete = (
+                update.child_total is not None
+                and update.child_total > 0
+                and update.child_completed >= update.child_total
+            )
+            if update.child_description is None or child_complete:
+                if self._child_task_id is not None:
+                    self._progress.remove_task(self._child_task_id)
+                    self._child_task_id = None
+                return
+            child_label = _escape_markup(update.child_description)
+            if self._child_task_id is None:
+                self._child_task_id = self._progress.add_task(
+                    "",
+                    total=update.child_total,
+                    label=child_label,
+                    is_child=True,
+                )
+            self._progress.update(
+                self._child_task_id,
+                completed=update.child_completed,
+                total=update.child_total,
+                label=child_label,
+            )
 
     def finish(self) -> None:
         """Stop progress rendering and resume any parent status."""
@@ -521,6 +631,7 @@ class StatusProgressRenderer:
             self._progress.stop()
         self._progress = None
         self._task_id = None
+        self._child_task_id = None
         self._owns_live = False
         self._active = False
 

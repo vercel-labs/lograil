@@ -658,6 +658,7 @@ class StatusHandle:
         self._parent = _parent
         self._spinner_handler = _spinner_handler
         self._restore_message = _restore_message
+        self._pinned = False
         self.done_style = "success"
 
     @property
@@ -672,6 +673,12 @@ class StatusHandle:
                 return cur._status
             cur = cur._parent
         return None
+
+    def _root_handle(self) -> StatusHandle:
+        cur = self
+        while cur._parent is not None:
+            cur = cur._parent
+        return cur
 
     def update(
         self,
@@ -716,8 +723,10 @@ class StatusHandle:
             separator=sticky_separator,
             sticky_subject=sticky_subject,
         )
-        status_obj = self._root_status()
-        if status_obj is not None:
+        root = self._root_handle()
+        if root._pinned:
+            root.resume_status(message)
+        elif (status_obj := root._status) is not None:
             status_obj.update(_fit_spinner_text(message))
         else:
             rendered = message.plain if isinstance(message, Text) else message
@@ -729,6 +738,42 @@ class StatusHandle:
                 message_subject,
             ))
             self._restore_message = message
+
+    def pin(
+        self,
+        message: str | Text | StatusLabel | None = None,
+        *,
+        process: str | None = None,
+        subject: str | None = None,
+    ) -> None:
+        """Show a stable success state that the next update can replace.
+
+        Fancy output keeps the state in the active live display; pinning does
+        not emit a permanent line or change the enclosing status's ``done``
+        policy. Plain and JSON output log the state at INFO. A later
+        :meth:`update` resumes the spinner in place.
+        """
+        if isinstance(message, Text):
+            if process is not None or subject is not None:
+                raise ValueError(
+                    "status pin accepts either Text or process/subject"
+                )
+        else:
+            message, _, _ = _format_status_message(
+                message,
+                process=process,
+                subject=subject,
+            )
+        root = self._root_handle()
+        if root._status is None:
+            rendered = message.plain if isinstance(message, Text) else message
+            _logger.info(rendered)
+            return
+        pinned = Text("+", style="green")
+        pinned.append(" ")
+        pinned.append_text(_fit_spinner_text(message))
+        root.use_progress(pinned)
+        root._pinned = True
 
     def restore(self) -> None:
         """Restore this status's stable label after transient output."""
@@ -759,6 +804,7 @@ class StatusHandle:
         if self._parent is not None:
             self._parent.use_progress(progress)
             return
+        self._pinned = False
         if self._status is not None:
             if progress is not None:
                 self._status._live.update(progress, refresh=True)
@@ -776,6 +822,7 @@ class StatusHandle:
             )
             self._parent.resume_status(restore_message)
             return
+        self._pinned = False
         if self._status is not None:
             restore_message = (
                 self._restore_message if message is None else message

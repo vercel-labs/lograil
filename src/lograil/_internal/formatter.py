@@ -394,7 +394,13 @@ def format_log_entry(
 
     time_str = _format_time(normalized)
     sev_style = SEVERITY_TIMESTAMP_STYLES.get(levelname, "")
-    ts_str = f"[{sev_style}]{time_str}[/{sev_style}]" if sev_style else time_str
+    # Unparseable timestamps fall back to producer-supplied text.
+    escaped_time = _escape_markup(time_str)
+    ts_str = (
+        f"[{sev_style}]{escaped_time}[/{sev_style}]"
+        if sev_style
+        else escaped_time
+    )
 
     if ctx_name:
         style = context_style(ctx_name, render_console)
