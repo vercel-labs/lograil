@@ -35,11 +35,14 @@ from lograil._internal.process import (
 )
 from lograil._internal.progress import (
     ProgressUpdate,
+    TerminalProgressHandle,
+    TerminalProgressState,
     emit as emit_progress,
     emit_line as emit_progress_line,
     format_line as format_progress_line,
     lograil_instrumentation_env,
     parse as parse_progress_line,
+    terminal_progress,
 )
 from lograil._internal.remap import DEFAULT_REMAPS, Remap, RemapPipeline
 from lograil._internal.tail import (
@@ -78,6 +81,8 @@ __all__ = [
     "StatusHandle",
     "StatusLabel",
     "SubprocessLogSource",
+    "TerminalProgressHandle",
+    "TerminalProgressState",
     "configure_logging",
     "emit_progress",
     "emit_progress_line",
@@ -103,5 +108,6 @@ __all__ = [
     "status_label",
     "stream_log_files",
     "tail_to_status",
+    "terminal_progress",
     "update_status",
 ]

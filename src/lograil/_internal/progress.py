@@ -4,14 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, TextIO, cast
 
+import contextlib
 import json
 import math
 import os
+import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from enum import IntEnum
 
 from rich.markup import escape as _escape_markup
 from rich.progress import (
@@ -39,6 +42,97 @@ _PROGRESS_COMPLETE_GLYPH = "━"
 _PROGRESS_REMAINING_GLYPH = "─"
 _PROGRESS_ASCII_COMPLETE_GLYPH = "="
 _PROGRESS_ASCII_REMAINING_GLYPH = "-"
+_TERMINAL_PROGRESS_PREFIX = "\x1b]9;4"
+_TERMINAL_PROGRESS_SUFFIX = "\x1b\\"
+
+
+class TerminalProgressState(IntEnum):
+    """OSC 9;4 progress states understood by supporting terminals."""
+
+    HIDDEN = 0
+    NORMAL = 1
+    ERROR = 2
+    INDETERMINATE = 3
+    PAUSED = 4
+
+
+class TerminalProgressHandle:
+    """Emit terminal-native progress without reserving an inline row."""
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        self._stream = sys.stderr if stream is None else stream
+        try:
+            is_terminal = self._stream.isatty()
+        except OSError:
+            is_terminal = False
+        self._enabled = log.fancy_output_enabled() and is_terminal
+        self._active = False
+        self._lock = threading.Lock()
+
+    @property
+    def active(self) -> bool:
+        """Whether this handle currently owns terminal progress state."""
+        return self._active
+
+    def update(
+        self,
+        percent: int | None = None,
+        *,
+        state: TerminalProgressState = TerminalProgressState.NORMAL,
+    ) -> None:
+        """Set terminal progress, using ``None`` for indeterminate work."""
+        if state is TerminalProgressState.HIDDEN:
+            self.clear()
+            return
+        if percent is None:
+            if state not in {
+                TerminalProgressState.NORMAL,
+                TerminalProgressState.INDETERMINATE,
+            }:
+                raise ValueError(
+                    "terminal progress without a percentage must be "
+                    "indeterminate"
+                )
+            state = TerminalProgressState.INDETERMINATE
+            percent = 0
+        elif state is TerminalProgressState.INDETERMINATE:
+            raise ValueError(
+                "indeterminate terminal progress cannot have a percentage"
+            )
+        if isinstance(percent, bool) or not 0 <= percent <= 100:
+            raise ValueError("terminal progress percentage must be 0..100")
+        with self._lock:
+            self._write(state, percent)
+            self._active = self._enabled
+
+    def clear(self) -> None:
+        """Remove terminal progress state if this handle displayed it."""
+        with self._lock:
+            if not self._active:
+                return
+            self._write(TerminalProgressState.HIDDEN, 0)
+            self._active = False
+
+    def _write(self, state: TerminalProgressState, percent: int) -> None:
+        if not self._enabled:
+            return
+        self._stream.write(
+            f"{_TERMINAL_PROGRESS_PREFIX};{state.value};{percent}"
+            f"{_TERMINAL_PROGRESS_SUFFIX}"
+        )
+        self._stream.flush()
+
+
+@contextlib.contextmanager
+def terminal_progress(
+    *, stream: TextIO | None = None
+) -> Iterator[TerminalProgressHandle]:
+    """Yield an OSC 9;4 terminal-progress handle and clear it on exit."""
+    handle = TerminalProgressHandle(stream)
+    try:
+        yield handle
+    finally:
+        handle.clear()
 
 
 @dataclass(frozen=True)

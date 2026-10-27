@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from lograil import (
+    TerminalProgressState,
     format_progress_line,
     lograil_instrumentation_env,
+    terminal_progress,
 )
 from lograil._internal import console, log, process, progress
 
@@ -99,6 +103,49 @@ def test_instrumentation_env_enables_progress_lines(
         monkeypatch.setenv(name, value)
 
     assert progress.should_emit_progress_lines() is True
+
+
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_terminal_progress_emits_osc_states_and_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", "fancy")
+    log.configure_logging()
+    stream = _Terminal()
+
+    with terminal_progress(stream=stream) as handle:
+        handle.update()
+        handle.update(42)
+        handle.update(75, state=TerminalProgressState.PAUSED)
+        handle.update(90, state=TerminalProgressState.ERROR)
+
+    assert stream.getvalue() == (
+        "\x1b]9;4;3;0\x1b\\"
+        "\x1b]9;4;1;42\x1b\\"
+        "\x1b]9;4;4;75\x1b\\"
+        "\x1b]9;4;2;90\x1b\\"
+        "\x1b]9;4;0;0\x1b\\"
+    )
+    assert handle.active is False
+
+
+@pytest.mark.parametrize("mode", ["plain", "json"])
+def test_terminal_progress_is_silent_outside_fancy_mode(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setenv("LOGRAIL_OUTPUT", mode)
+    log.configure_logging()
+    stream = _Terminal()
+
+    with terminal_progress(stream=stream) as handle:
+        handle.update(25)
+
+    assert not stream.getvalue()
+    assert handle.active is False
 
 
 def test_status_progress_uses_unicode_glyphs_by_default(

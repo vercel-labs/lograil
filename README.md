@@ -80,6 +80,22 @@ with status("deploying", sticky=True):
 A status can be flipped to a warning-style completion (used for
 cancellation) with `handle.cancel()`.
 
+## Terminal-native progress
+
+`terminal_progress()` emits the OSC 9;4 progress protocol in fancy TTY mode.
+Supporting terminals can show progress in their tab, window, or taskbar
+without Lograil reserving an inline row. Plain, JSON, and non-TTY output stay
+unchanged, and the context manager always removes the terminal progress state:
+
+```python
+from lograil import TerminalProgressState, terminal_progress
+
+with terminal_progress() as handle:
+    handle.update()  # indeterminate
+    handle.update(50)
+    handle.update(75, state=TerminalProgressState.PAUSED)
+```
+
 ## Tailing a log source into a status
 
 `tail_to_status()` consumes any `LogSource` on a background thread and

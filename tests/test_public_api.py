@@ -29,6 +29,8 @@ def test_top_level_all_is_curated_public_surface() -> None:
         "RemapPipeline",
         "StatusHandle",
         "StatusLabel",
+        "TerminalProgressHandle",
+        "TerminalProgressState",
         "UNSET",
         "SubprocessLogSource",
         "configure_logging",
@@ -56,6 +58,7 @@ def test_top_level_all_is_curated_public_surface() -> None:
         "status_label",
         "stream_log_files",
         "tail_to_status",
+        "terminal_progress",
         "update_status",
     }
 
